@@ -472,3 +472,67 @@ func TestSummarizeLeavesTrendsNullWithoutABaseline(t *testing.T) {
 		}
 	}
 }
+
+func TestMonthlyRollupCountsConditionsAndExtremes(t *testing.T) {
+	day := func(date string, cond string, high, low, rain, snow float64) servedDay {
+		d, _ := time.ParseInLocation("2006-01-02", date, testZone)
+		return servedDay{Date: date, Time: d.UnixMilli(), Condition: cond, TempMax: high, TempMin: low, Rain: rain, Snow: snow, Humidity: 60, Pressure: 1010, Clouds: 50, WindSpeed: 3}
+	}
+
+	months := monthlyRollup([]servedDay{
+		day("2026-01-05", "Snow", 1, -9, 0, 12),
+		day("2026-01-06", "Snow", 2, -4, 0, 3),
+		day("2026-01-07", "Clouds", 5, -1, 0, 0),
+		day("2026-01-08", "Drizzle", 6, 0, 1.5, 0), // folded into rain days
+		day("2026-01-09", "Thunderstorm", 7, 1, 20, 0),
+		day("2026-08-01", "Clear", 33, 24, 0, 0),
+		day("2026-08-02", "Rain", 28, 22, 40, 0),
+	})
+
+	if len(months) != 2 {
+		t.Fatalf("got %d months, want 2", len(months))
+	}
+	jan, aug := months[0], months[1]
+
+	if jan.YearMonth != "2026-01" || aug.YearMonth != "2026-08" {
+		t.Fatalf("months came back as %s, %s", jan.YearMonth, aug.YearMonth)
+	}
+	// Ascending, because a time axis reads left to right.
+	if jan.MonthTime >= aug.MonthTime {
+		t.Error("months should be ascending by time")
+	}
+
+	firstOfJan, _ := time.ParseInLocation("2006-01-02", "2026-01-01", testZone)
+	if jan.MonthTime != firstOfJan.UnixMilli() {
+		t.Errorf("month_time = %d, want local midnight on the 1st (%d)", jan.MonthTime, firstOfJan.UnixMilli())
+	}
+
+	if jan.Days != 5 || jan.SnowDays != 2 || jan.CloudDays != 1 || jan.RainDays != 1 || jan.OtherDays != 1 {
+		t.Errorf("january counts wrong: %+v", jan)
+	}
+	// Drizzle counts as rain; Thunderstorm falls to other. Every day lands in
+	// exactly one bucket, or the stacked bar would not add up to Days.
+	if jan.ClearDays+jan.CloudDays+jan.RainDays+jan.SnowDays+jan.OtherDays != jan.Days {
+		t.Errorf("condition buckets do not sum to Days: %+v", jan)
+	}
+
+	// The month's extremes, not the average of the daily ones.
+	if jan.PeakTempMax != 7 || jan.PeakTempMin != -9 {
+		t.Errorf("january peaks = %v/%v, want 7/-9", jan.PeakTempMax, jan.PeakTempMin)
+	}
+	if jan.AvgTempMax != 4.2 {
+		t.Errorf("january avg_temp_max = %v, want 4.2", jan.AvgTempMax)
+	}
+	if jan.TotalSnowMm != 15 || jan.TotalRainMm != 21.5 {
+		t.Errorf("january totals = snow %v rain %v, want 15/21.5", jan.TotalSnowMm, jan.TotalRainMm)
+	}
+	if aug.ClearDays != 1 || aug.RainDays != 1 || aug.Days != 2 {
+		t.Errorf("august counts wrong: %+v", aug)
+	}
+}
+
+func TestMonthlyRollupOfNothing(t *testing.T) {
+	if got := monthlyRollup(nil); len(got) != 0 {
+		t.Errorf("want an empty slice, got %v", got)
+	}
+}

@@ -97,6 +97,18 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 		}
 		return jsonResponse(http.StatusOK, days)
 
+	case "monthly":
+		from, to, err := timeRange(request.QueryStringParameters, now)
+		if err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		days, err := a.servedDays(ctx, from, to)
+		if err != nil {
+			log.Printf("read daily archive: %v", err)
+			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "cannot read daily archive"})
+		}
+		return jsonResponse(http.StatusOK, monthlyRollup(days))
+
 	case "", "observations":
 		from, to, err := timeRange(request.QueryStringParameters, now)
 		if err != nil {
@@ -571,4 +583,136 @@ func jsonResponse(status int, body any) (events.LambdaFunctionURLResponse, error
 		Headers:    map[string]string{"Content-Type": "application/json"},
 		Body:       string(encoded),
 	}, nil
+}
+
+// servedMonth is one calendar month rolled up from its days. The counts are the
+// point of it: "how many days did it rain in January" is a question the daily
+// rows can answer only by being counted, and counting 374 rows in the browser
+// to draw one bar is work the dashboard should not be doing.
+//
+// Condition days are counted per OpenWeather's coarse `main` value, which is
+// the one worth charting -- its `description` splits the same sky into 小雨 /
+// 適度な雨 / 激しい雨 and would scatter a year across a dozen near-synonyms.
+type servedMonth struct {
+	MonthTime int64  `json:"month_time"` // local midnight on the 1st, epoch ms
+	YearMonth string `json:"year_month"` // YYYY-MM
+	Days      int    `json:"days"`
+
+	ClearDays int `json:"clear_days"`
+	CloudDays int `json:"cloud_days"`
+	RainDays  int `json:"rain_days"`
+	SnowDays  int `json:"snow_days"`
+	OtherDays int `json:"other_days"`
+
+	AvgTempMax float64 `json:"avg_temp_max"`
+	AvgTempMin float64 `json:"avg_temp_min"`
+	// The month's own extremes, not the average of the daily ones -- the
+	// hottest afternoon of August is a different fact from a typical August day.
+	PeakTempMax float64 `json:"peak_temp_max"`
+	PeakTempMin float64 `json:"peak_temp_min"`
+
+	TotalRainMm float64 `json:"total_rain_mm"`
+	TotalSnowMm float64 `json:"total_snow_mm"`
+
+	AvgHumidity  float64 `json:"avg_humidity"`
+	AvgPressure  float64 `json:"avg_pressure"`
+	AvgClouds    float64 `json:"avg_clouds"`
+	AvgWindSpeed float64 `json:"avg_wind_speed"`
+}
+
+// monthlyRollup groups whole days by the month their date falls in. It takes
+// the already-served days rather than reading the archive again, so the two
+// endpoints cannot disagree about what a day was.
+func monthlyRollup(days []servedDay) []servedMonth {
+	type accumulator struct {
+		month                                              *servedMonth
+		tempMax, tempMin, humidity, pressure, clouds, wind float64
+	}
+
+	byMonth := map[string]*accumulator{}
+	order := []string{}
+
+	for _, day := range days {
+		if len(day.Date) < 7 {
+			continue
+		}
+		key := day.Date[:7]
+		acc, ok := byMonth[key]
+		if !ok {
+			// Midnight on the 1st, derived from the day's own timestamp so the
+			// zone the archive was written in is the zone this lands in.
+			first := time.UnixMilli(day.Time).UTC().AddDate(0, 0, -(dayOfMonth(day.Date) - 1))
+			acc = &accumulator{month: &servedMonth{
+				MonthTime:   first.UnixMilli(),
+				YearMonth:   key,
+				PeakTempMax: day.TempMax,
+				PeakTempMin: day.TempMin,
+			}}
+			byMonth[key] = acc
+			order = append(order, key)
+		}
+		m := acc.month
+		m.Days++
+
+		switch day.Condition {
+		case "Clear":
+			m.ClearDays++
+		case "Clouds":
+			m.CloudDays++
+		case "Rain", "Drizzle":
+			m.RainDays++
+		case "Snow":
+			m.SnowDays++
+		default:
+			// Thunderstorm, Mist, Fog and the dust/ash family all land here.
+			// They are rare enough that a slot each would be four empty series
+			// on every chart, and lumping them keeps the stack at five.
+			m.OtherDays++
+		}
+
+		if day.TempMax > m.PeakTempMax {
+			m.PeakTempMax = day.TempMax
+		}
+		if day.TempMin < m.PeakTempMin {
+			m.PeakTempMin = day.TempMin
+		}
+		m.TotalRainMm += day.Rain
+		m.TotalSnowMm += day.Snow
+
+		acc.tempMax += day.TempMax
+		acc.tempMin += day.TempMin
+		acc.humidity += day.Humidity
+		acc.pressure += day.Pressure
+		acc.clouds += day.Clouds
+		acc.wind += day.WindSpeed
+	}
+
+	months := make([]servedMonth, 0, len(byMonth))
+	for _, key := range order {
+		acc := byMonth[key]
+		m := acc.month
+		if m.Days > 0 {
+			n := float64(m.Days)
+			m.AvgTempMax = round(acc.tempMax/n, 2)
+			m.AvgTempMin = round(acc.tempMin/n, 2)
+			m.AvgHumidity = round(acc.humidity/n, 1)
+			m.AvgPressure = round(acc.pressure/n, 1)
+			m.AvgClouds = round(acc.clouds/n, 1)
+			m.AvgWindSpeed = round(acc.wind/n, 2)
+		}
+		m.TotalRainMm = round(m.TotalRainMm, 1)
+		m.TotalSnowMm = round(m.TotalSnowMm, 1)
+		months = append(months, *m)
+	}
+	// Ascending, because this feeds a time axis.
+	sort.Slice(months, func(i, j int) bool { return months[i].YearMonth < months[j].YearMonth })
+	return months
+}
+
+func dayOfMonth(date string) int {
+	day, err := strconv.Atoi(date[8:])
+	if err != nil {
+		return 1
+	}
+	return day
 }

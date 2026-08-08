@@ -142,6 +142,17 @@ forward past today without undoing history.
 `forecast.json` is replaced whole on every run, except for alert text, which is
 carried across runs because re-fetching it costs a billed call.
 
+## Counting conditions
+
+`monthly` buckets each day by OpenWeather's coarse `main` value rather than its
+`description`. The description splits one rainy sky into 小雨 / 適度な雨 /
+激しい雨 and would scatter a year across a dozen near-synonyms; `main` gives the
+four that actually characterise a month here — Clear, Clouds, Rain, Snow.
+Drizzle is counted as rain, and Thunderstorm, Mist, Fog and the dust family fall
+into `other_days`, which keeps the stack at five series instead of twelve, most
+of them empty. Every day lands in exactly one bucket, so the buckets sum to
+`days` and a stacked bar reaches the same height as the month is long.
+
 ## Backfill
 
 One Call 4.0's daily timeline reaches back decades on the same endpoint the
@@ -172,6 +183,7 @@ OpenWeather key or the Grafana push token.
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
+| `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
 | `?resource=alerts` | Active alerts, with epoch-millisecond start and end for a time axis. |
