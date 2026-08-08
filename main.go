@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -240,13 +241,25 @@ func (a *app) openWeather(ctx context.Context) (*openWeather, error) {
 		return nil, fmt.Errorf("read OpenWeather API key parameter: %w", err)
 	}
 
-	lat, err := requiredFloatEnv("WEATHER_LATITUDE")
+	// The coordinates come from SSM rather than the environment for the same
+	// reason kyuden-metrics keeps its 供給地点特定番号 there: not a credential,
+	// but it is where someone lives, and a Lambda's environment variables are
+	// readable by anyone who can describe the function.
+	latParameter, err := requiredEnv("WEATHER_LATITUDE_PARAMETER_NAME")
 	if err != nil {
 		return nil, err
 	}
-	lon, err := requiredFloatEnv("WEATHER_LONGITUDE")
+	lat, err := a.parameterFloat(ctx, latParameter, 90)
+	if err != nil {
+		return nil, fmt.Errorf("read latitude parameter: %w", err)
+	}
+	lonParameter, err := requiredEnv("WEATHER_LONGITUDE_PARAMETER_NAME")
 	if err != nil {
 		return nil, err
+	}
+	lon, err := a.parameterFloat(ctx, lonParameter, 180)
+	if err != nil {
+		return nil, fmt.Errorf("read longitude parameter: %w", err)
 	}
 
 	return &openWeather{
@@ -415,14 +428,28 @@ func requiredEnv(name string) (string, error) {
 	return value, nil
 }
 
-func requiredFloatEnv(name string) (float64, error) {
-	raw, err := requiredEnv(name)
+// parameterFloat reads a coordinate and range-checks it, because the failure it
+// guards against is not a crash. A parameter left at its Terraform placeholder,
+// or holding a typo, would otherwise be read as 0 and the collector would
+// cheerfully archive the weather in the Gulf of Guinea.
+func (a *app) parameterFloat(ctx context.Context, parameterName string, limit float64) (float64, error) {
+	raw, err := a.parameterString(ctx, parameterName)
 	if err != nil {
 		return 0, err
 	}
-	value, err := strconv.ParseFloat(raw, 64)
+	return a.parseCoordinate(raw, parameterName, limit)
+}
+
+// parseCoordinate is split out from the SSM read so the range check can be
+// tested without a client. The value never appears in an error: keeping the
+// location out of CloudWatch Logs is the whole reason it lives in SSM.
+func (a *app) parseCoordinate(raw, parameterName string, limit float64) (float64, error) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be a number, got %q", name, raw)
+		return 0, fmt.Errorf("%s does not hold a number", parameterName)
+	}
+	if math.Abs(value) > limit {
+		return 0, fmt.Errorf("%s is outside +/-%g", parameterName, limit)
 	}
 	return value, nil
 }

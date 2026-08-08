@@ -113,7 +113,7 @@ the API does not return a tendency.
 | `ARCHIVE_BUCKET` | yes | S3 bucket for the archive. Required in both modes. |
 | `ARCHIVE_PREFIX` | no | Key prefix, defaults to `weather/`. |
 | `WEATHER_MODE` | no | `collect` (default) or `serve`. |
-| `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | collect | The location to read. |
+| `WEATHER_LATITUDE_PARAMETER_NAME`, `WEATHER_LONGITUDE_PARAMETER_NAME` | collect | SSM parameters holding the coordinates to read. In SSM rather than the environment for the same reason kyuden-metrics keeps its 供給地点特定番号 there -- not a credential, but a Lambda's environment variables are readable by anyone who can describe the function. Range-checked on read, so a parameter left at its Terraform placeholder fails loudly instead of collecting the weather at 0,0. |
 | `WEATHER_LOCATION` | no | Label on every metric, defaults to `home`. |
 | `WEATHER_TIMEZONE_OFFSET_SECONDS` | no | UTC offset the day boundaries are cut on, defaults to `32400` (JST). An offset rather than a zone name because the Lambda runtime ships no tzdata; exact for Japan, which has no DST. |
 | `WEATHER_LANG` | no | Language for `description`, defaults to `ja`. |
@@ -190,6 +190,8 @@ set outside Terraform, so they never land in state:
 
 ```bash
 aws ssm put-parameter --region us-east-1 --name /weather-metrics/openweather-api-key --type SecureString --overwrite --value 'YOUR_API_KEY'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/latitude --type SecureString --overwrite --value '33.5904'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/longitude --type SecureString --overwrite --value '130.4017'
 ```
 
 The API key must be on a **One Call by Call** subscription — a plain free-tier

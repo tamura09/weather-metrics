@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -406,5 +407,39 @@ func TestSummarizeLeavesObservedExtremesNullBeforeTheFirstReadingOfTheDay(t *tes
 
 	if summary.ObservedMax != nil || summary.ObservedMin != nil {
 		t.Errorf("observed extremes = %v/%v, want nil", summary.ObservedMax, summary.ObservedMin)
+	}
+}
+
+// A coordinate parameter left at its Terraform placeholder, or holding a typo,
+// must stop the run. Parsed as 0 it would not crash -- it would quietly collect
+// the weather in the Gulf of Guinea for as long as nobody looked at the map.
+func TestParameterFloatRangeChecks(t *testing.T) {
+	for _, tc := range []struct {
+		stored string
+		limit  float64
+		ok     bool
+	}{
+		{"33.5904", 90, true},
+		{"-33.5904", 90, true},
+		{"130.4017", 180, true},
+		{"0", 90, true}, // a real, if unlikely, coordinate
+		{"MANAGED_OUTSIDE_TERRAFORM", 90, false},
+		{"", 90, false},
+		{"91", 90, false},
+		{"181", 180, false},
+	} {
+		instance := &app{parameters: nil}
+		value, err := instance.parseCoordinate(tc.stored, "/weather-metrics/latitude", tc.limit)
+		if tc.ok && err != nil {
+			t.Errorf("%q: unexpected error %v", tc.stored, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("%q: want an error, got %v", tc.stored, value)
+		}
+		// Whatever went wrong, the coordinate must not be in the message: the
+		// point of keeping it in SSM is that it stays out of CloudWatch Logs.
+		if err != nil && tc.stored != "" && strings.Contains(err.Error(), tc.stored) {
+			t.Errorf("%q: error leaked the stored value: %v", tc.stored, err)
+		}
 	}
 }
