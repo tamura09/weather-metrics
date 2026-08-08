@@ -240,10 +240,10 @@ func TestSummarizeCombinesForecastAndObserved(t *testing.T) {
 		t.Errorf("observed max/min = %v/%v, want 33.4/25.2", *summary.ObservedMax, *summary.ObservedMin)
 	}
 	// The 11:00 reading is the baseline three hours before the 14:00 latest.
-	if summary.PressureChange != -5 {
+	if summary.PressureChange == nil || *summary.PressureChange != -5 {
 		t.Errorf("3h pressure change = %v, want -5", summary.PressureChange)
 	}
-	if summary.TempChange24h != 3.4 {
+	if summary.TempChange24h == nil || *summary.TempChange24h != 3.4 {
 		t.Errorf("24h temp change = %v, want 3.4", summary.TempChange24h)
 	}
 	if summary.RainToday != 2 {
@@ -440,6 +440,35 @@ func TestParameterFloatRangeChecks(t *testing.T) {
 		// point of keeping it in SSM is that it stays out of CloudWatch Logs.
 		if err != nil && tc.stored != "" && strings.Contains(err.Error(), tc.stored) {
 			t.Errorf("%q: error leaked the stored value: %v", tc.stored, err)
+		}
+	}
+}
+
+// The first run after a deployment has nothing to compare against. Reporting 0
+// there would claim the pressure is steady, which is a statement about the
+// weather rather than an admission that the archive is too short to answer --
+// and a steady barometer is exactly the reassuring reading someone checking for
+// a headache trigger would act on.
+func TestSummarizeLeavesTrendsNullWithoutABaseline(t *testing.T) {
+	now := at(8, 14, 0)
+	summary := summarize([]observation{{Time: now, Temp: 33.4, Pressure: 1005}}, forecastSnapshot{}, testZone, now)
+
+	if summary.PressureChange != nil {
+		t.Errorf("pressure_change_3h = %v, want nil on a single reading", *summary.PressureChange)
+	}
+	if summary.TempChange24h != nil {
+		t.Errorf("temp_change_24h = %v, want nil on a single reading", *summary.TempChange24h)
+	}
+
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]any
+	decode(t, string(encoded), &decoded)
+	for _, field := range []string{"pressure_change_3h", "temp_change_24h"} {
+		if decoded[field] != nil {
+			t.Errorf("%s = %v, want null", field, decoded[field])
 		}
 	}
 }
