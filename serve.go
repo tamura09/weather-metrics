@@ -356,19 +356,24 @@ type weatherSummaryRow struct {
 	FeelsLikeDelta float64 `json:"feels_like_delta"`
 	Humidity       float64 `json:"humidity"`
 	Pressure       float64 `json:"pressure"`
-	PressureChange float64 `json:"pressure_change_3h"`
-	TempChange24h  float64 `json:"temp_change_24h"`
-	WindSpeed      float64 `json:"wind_speed"`
-	WindGust       float64 `json:"wind_gust"`
-	WindCompass    string  `json:"wind_compass"`
-	Clouds         float64 `json:"clouds"`
-	UVI            float64 `json:"uvi"`
-	Condition      string  `json:"condition"`
-	Description    string  `json:"description"`
-	Icon           string  `json:"icon"`
-	ForecastMax    float64 `json:"forecast_temp_max"`
-	ForecastMin    float64 `json:"forecast_temp_min"`
-	ForecastPop    float64 `json:"forecast_pop"`
+	// Null, not zero, until the archive holds a reading far enough back to
+	// compare against. Zero here would read as "steady" -- which is a claim
+	// about the weather, not an admission that we cannot answer yet. The
+	// Prometheus copy of these two already omits the series in that case;
+	// this makes the JSON agree with it.
+	PressureChange *float64 `json:"pressure_change_3h"`
+	TempChange24h  *float64 `json:"temp_change_24h"`
+	WindSpeed      float64  `json:"wind_speed"`
+	WindGust       float64  `json:"wind_gust"`
+	WindCompass    string   `json:"wind_compass"`
+	Clouds         float64  `json:"clouds"`
+	UVI            float64  `json:"uvi"`
+	Condition      string   `json:"condition"`
+	Description    string   `json:"description"`
+	Icon           string   `json:"icon"`
+	ForecastMax    float64  `json:"forecast_temp_max"`
+	ForecastMin    float64  `json:"forecast_temp_min"`
+	ForecastPop    float64  `json:"forecast_pop"`
 	// Null before the first reading of the day lands, for the same reason the
 	// daily rows use pointers: an unmeasured maximum is not a maximum of zero.
 	ObservedMax     *float64 `json:"observed_temp_max"`
@@ -453,10 +458,10 @@ func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Loc
 	summary.DataLagSeconds = round(now.Sub(latest.Time).Seconds(), 0)
 
 	if change, ok := changeOver(readings, now, pressureWindow, pressureTolerance, func(r observation) float64 { return r.Pressure }); ok {
-		summary.PressureChange = round(change, 2)
+		summary.PressureChange = ptr(round(change, 2))
 	}
 	if change, ok := changeOver(readings, now, temperatureWindow, temperatureTolerance, func(r observation) float64 { return r.Temp }); ok {
-		summary.TempChange24h = round(change, 2)
+		summary.TempChange24h = ptr(round(change, 2))
 	}
 
 	today := startOfDay(now, zone)
