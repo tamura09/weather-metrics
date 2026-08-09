@@ -536,3 +536,56 @@ func TestMonthlyRollupOfNothing(t *testing.T) {
 		t.Errorf("want an empty slice, got %v", got)
 	}
 }
+
+// rain_1h is a rolling one-hour total, so at a ten-minute cadence six
+// consecutive readings describe overlapping windows of the same rain. Summing
+// them counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
+// gives.
+func TestAccumulateRainDoesNotDoubleCountARollingTotal(t *testing.T) {
+	// One hour of steady drizzle: every reading reports the same 2mm covering
+	// the hour that just ended. The hour delivered 2mm, not 12.
+	var readings []observation
+	for minute := 0; minute < 60; minute += 10 {
+		readings = append(readings, observation{Time: at(8, 13, minute), Rain1h: 2})
+	}
+	if got := accumulateRain(readings, testZone, func(r observation) float64 { return r.Rain1h }); got != 2 {
+		t.Errorf("one hour of 2mm = %v, want 2", got)
+	}
+
+	// A second hour with a heavier peak adds its own maximum.
+	for minute := 0; minute < 60; minute += 10 {
+		readings = append(readings, observation{Time: at(8, 14, minute), Rain1h: 5})
+	}
+	if got := accumulateRain(readings, testZone, func(r observation) float64 { return r.Rain1h }); got != 7 {
+		t.Errorf("two hours = %v, want 7", got)
+	}
+
+	if got := accumulateRain(nil, testZone, func(r observation) float64 { return r.Rain1h }); got != 0 {
+		t.Errorf("no readings = %v, want 0", got)
+	}
+}
+
+func TestDominantConditionPrefersTheMoreEventfulOnATie(t *testing.T) {
+	// Three cloudy, three raining: the hour is worth remembering as the one it
+	// rained in.
+	tie := []observation{
+		{Condition: "Clouds", Description: "曇りがち"}, {Condition: "Clouds"}, {Condition: "Clouds"},
+		{Condition: "Rain", Description: "小雨"}, {Condition: "Rain"}, {Condition: "Rain"},
+	}
+	if got, _ := dominantCondition(tie); got != "Rain" {
+		t.Errorf("tie resolved to %q, want Rain", got)
+	}
+
+	// A clear majority wins regardless of rank.
+	majority := []observation{
+		{Condition: "Clouds"}, {Condition: "Clouds"}, {Condition: "Clouds"}, {Condition: "Clouds"},
+		{Condition: "Rain"},
+	}
+	if got, _ := dominantCondition(majority); got != "Clouds" {
+		t.Errorf("majority resolved to %q, want Clouds", got)
+	}
+
+	if got, desc := dominantCondition(nil); got != "" || desc != "" {
+		t.Errorf("no readings = %q/%q, want empty", got, desc)
+	}
+}

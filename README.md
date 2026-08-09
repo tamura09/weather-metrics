@@ -142,6 +142,21 @@ forward past today without undoing history.
 `forecast.json` is replaced whole on every run, except for alert text, which is
 carried across runs because re-fetching it costs a billed call.
 
+## Rainfall is not a sum
+
+`rain_1h` is a **rolling** one-hour total, so at a ten-minute cadence six
+consecutive readings all describe overlapping windows of the same rain. Adding
+them up counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
+gives — more than double.
+
+Every observed rainfall figure therefore takes the largest reading within each
+clock hour and sums those. On a settled day that lands within a rounding error
+of the API's own daily total (1.99mm against 1.95mm). It is still an estimate:
+a rolling window straddles the hour boundary, so rain near the top of an hour
+can be seen by two of them. For a date that has settled, the daily row's `rain`
+is the authoritative figure; the observed one answers the different question of
+how much has fallen *so far today*.
+
 ## Counting conditions
 
 `monthly` buckets each day by OpenWeather's coarse `main` value rather than its
@@ -183,6 +198,7 @@ OpenWeather key or the Grafana push token.
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (6 on a complete hour). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |

@@ -97,6 +97,18 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 		}
 		return jsonResponse(http.StatusOK, days)
 
+	case "observed_hourly":
+		from, to, err := timeRange(request.QueryStringParameters, now)
+		if err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		hours, err := a.servedObservedHours(ctx, from, to)
+		if err != nil {
+			log.Printf("read observations archive: %v", err)
+			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "cannot read observations archive"})
+		}
+		return jsonResponse(http.StatusOK, hours)
+
 	case "monthly":
 		from, to, err := timeRange(request.QueryStringParameters, now)
 		if err != nil {
@@ -250,6 +262,7 @@ type servedDay struct {
 
 func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, error) {
 	byDate := map[string]*servedDay{}
+	readingsByDate := map[string][]observation{}
 	order := []string{}
 
 	fromDate := startOfDay(from, a.zone).Format("2006-01-02")
@@ -324,8 +337,11 @@ func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, 
 				day.ObservedMax = ptr(reading.Temp)
 				day.ObservedMin = ptr(reading.Temp)
 				day.ObservedMean = ptr(0)
-				day.ObservedRain = ptr(0)
 			}
+			// Rainfall cannot be accumulated one reading at a time -- rain_1h is
+			// a rolling total, so the readings overlap. Collected here and
+			// totalled per hour below.
+			readingsByDate[date] = append(readingsByDate[date], reading)
 			if reading.Temp > *day.ObservedMax {
 				*day.ObservedMax = reading.Temp
 			}
@@ -333,7 +349,6 @@ func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, 
 				*day.ObservedMin = reading.Temp
 			}
 			*day.ObservedMean += reading.Temp
-			*day.ObservedRain += reading.Rain1h
 			day.Observations++
 		}
 	}
@@ -350,7 +365,8 @@ func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, 
 			*day.ObservedMean = round(*day.ObservedMean/float64(day.Observations), 2)
 			*day.ObservedMax = round(*day.ObservedMax, 2)
 			*day.ObservedMin = round(*day.ObservedMin, 2)
-			*day.ObservedRain = round(*day.ObservedRain, 2)
+			day.ObservedRain = ptr(accumulateRain(readingsByDate[date], a.zone,
+				func(r observation) float64 { return r.Rain1h + r.Snow1h }))
 		}
 		days = append(days, *day)
 	}
@@ -482,10 +498,7 @@ func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Loc
 		summary.ObservedMax = ptr(round(high, 2))
 		summary.ObservedMin = ptr(round(low, 2))
 	}
-	for _, reading := range sinceMidnight {
-		summary.RainToday += reading.Rain1h
-	}
-	summary.RainToday = round(summary.RainToday, 2)
+	summary.RainToday = accumulateRain(sinceMidnight, zone, func(r observation) float64 { return r.Rain1h })
 
 	for _, day := range snapshot.Daily {
 		if day.Time != today.UnixMilli() {
@@ -715,4 +728,113 @@ func dayOfMonth(date string) int {
 		return 1
 	}
 	return day
+}
+
+// servedObservedHour is one clock hour of our own readings, rolled up. It is the
+// hourly counterpart of the daily rows, and exists for the same reason: at a
+// ten-minute cadence a month of raw readings is four thousand rows to draw one
+// line, where the hour it happened in is the resolution anyone actually reads.
+//
+// This is measured weather, not forecast -- the `hourly` resource is the
+// forward-looking one. It only covers hours the collector was running for, so
+// it begins when the collector did rather than where the backfilled daily
+// history begins.
+type servedObservedHour struct {
+	Time        int64   `json:"time"` // start of the hour, epoch ms
+	ISO         string  `json:"iso"`
+	Date        string  `json:"date"`
+	Hour        string  `json:"hour"` // HH:00
+	Temp        float64 `json:"temp"`
+	TempMax     float64 `json:"temp_max"`
+	TempMin     float64 `json:"temp_min"`
+	FeelsLike   float64 `json:"feels_like"`
+	Humidity    float64 `json:"humidity"`
+	Pressure    float64 `json:"pressure"`
+	Clouds      float64 `json:"clouds"`
+	WindSpeed   float64 `json:"wind_speed"`
+	WindGust    float64 `json:"wind_gust"`
+	RainMm      float64 `json:"rain_mm"`
+	SnowMm      float64 `json:"snow_mm"`
+	Condition   string  `json:"condition"`
+	Description string  `json:"description"`
+	// Readings is 6 on a complete hour at the ten-minute schedule. Fewer means
+	// runs were missed, which is worth being able to see rather than guess at.
+	Readings int `json:"readings"`
+}
+
+func (a *app) servedObservedHours(ctx context.Context, from, to time.Time) ([]servedObservedHour, error) {
+	buckets := map[int64][]observation{}
+	order := []int64{}
+
+	for _, month := range monthsBetween(from, to, a.zone) {
+		archive, err := a.loadMonth(ctx, month)
+		if err != nil {
+			return nil, fmt.Errorf("month %s: %w", month, err)
+		}
+		for _, reading := range archive.Readings {
+			if reading.Time.Before(from) || reading.Time.After(to) {
+				continue
+			}
+			local := reading.Time.In(a.zone)
+			start := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, a.zone)
+			key := start.UnixMilli()
+			if _, seen := buckets[key]; !seen {
+				order = append(order, key)
+			}
+			buckets[key] = append(buckets[key], reading)
+		}
+	}
+
+	hours := make([]servedObservedHour, 0, len(order))
+	for _, key := range order {
+		readings := buckets[key]
+		local := time.UnixMilli(key).In(a.zone)
+
+		hour := servedObservedHour{
+			Time:     key,
+			ISO:      local.Format(time.RFC3339),
+			Date:     local.Format("2006-01-02"),
+			Hour:     local.Format("15:00"),
+			Readings: len(readings),
+		}
+		hour.Condition, hour.Description = dominantCondition(readings)
+
+		var temp, feels, humidity, pressure, clouds, wind float64
+		for i, r := range readings {
+			if i == 0 || r.Temp > hour.TempMax {
+				hour.TempMax = r.Temp
+			}
+			if i == 0 || r.Temp < hour.TempMin {
+				hour.TempMin = r.Temp
+			}
+			if r.WindGust > hour.WindGust {
+				hour.WindGust = r.WindGust
+			}
+			temp += r.Temp
+			feels += r.FeelsLike
+			humidity += r.Humidity
+			pressure += r.Pressure
+			clouds += r.Clouds
+			wind += r.WindSpeed
+		}
+		n := float64(len(readings))
+		hour.Temp = round(temp/n, 2)
+		hour.FeelsLike = round(feels/n, 2)
+		hour.Humidity = round(humidity/n, 1)
+		hour.Pressure = round(pressure/n, 1)
+		hour.Clouds = round(clouds/n, 1)
+		hour.WindSpeed = round(wind/n, 2)
+		hour.TempMax = round(hour.TempMax, 2)
+		hour.TempMin = round(hour.TempMin, 2)
+		hour.WindGust = round(hour.WindGust, 2)
+		// Within a single hour every reading's rolling window covers that hour,
+		// so the largest is the hour's total rather than the sum.
+		hour.RainMm = accumulateRain(readings, a.zone, func(r observation) float64 { return r.Rain1h })
+		hour.SnowMm = accumulateRain(readings, a.zone, func(r observation) float64 { return r.Snow1h })
+
+		hours = append(hours, hour)
+	}
+
+	sort.Slice(hours, func(i, j int) bool { return hours[i].Time < hours[j].Time })
+	return hours, nil
 }

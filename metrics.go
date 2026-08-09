@@ -156,11 +156,8 @@ func todaySeries(base map[string]string, snapshot forecastSnapshot, month []obse
 		series = append(series, gauge("weather_observed_wind_gust_max_mps", base, round(high, 2), timestamp))
 	}
 
-	var rainfall float64
-	for _, r := range readings {
-		rainfall += r.Rain1h
-	}
-	series = append(series, gauge("weather_observed_rain_today_mm", base, round(rainfall, 2), timestamp))
+	series = append(series, gauge("weather_observed_rain_today_mm", base,
+		accumulateRain(readings, zone, func(r observation) float64 { return r.Rain1h }), timestamp))
 
 	return series
 }
