@@ -134,3 +134,78 @@ func round(value float64, places int) float64 {
 func ptr(value float64) *float64 {
 	return &value
 }
+
+// accumulateRain totals the rainfall a set of readings covers, which is not the
+// sum of their rain_1h values. OpenWeather reports rain_1h as a *rolling* total
+// for the hour ending at the reading, so at a ten-minute cadence six consecutive
+// readings all describe overlapping windows of the same rain. Summing them
+// counted a wet day at more than twice its real total: 4.21mm against the 1.95mm
+// the settled daily record gives for 2026-08-09.
+//
+// Taking the largest reading within each clock hour and summing those recovers
+// the figure to within a rounding error on a settled day. It is still an
+// estimate -- a rolling window straddles the hour boundary, so rain that falls
+// near the top of an hour can be seen by two of them -- but it is the closest
+// this data supports, and it errs far smaller than the naive sum.
+func accumulateRain(readings []observation, zone *time.Location, value func(observation) float64) float64 {
+	perHour := map[int64]float64{}
+	for _, reading := range readings {
+		local := reading.Time.In(zone)
+		hour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, zone).Unix()
+		if v := value(reading); v > perHour[hour] {
+			perHour[hour] = v
+		}
+	}
+
+	var total float64
+	for _, v := range perHour {
+		total += v
+	}
+	return round(total, 2)
+}
+
+// dominantCondition is the condition an hour is labelled with: whichever was
+// seen most often among its readings. Ties go to the more eventful of the two,
+// because an hour that was half cloudy and half raining is worth remembering as
+// the one it rained in.
+func dominantCondition(readings []observation) (string, string) {
+	counts := map[string]int{}
+	descriptions := map[string]string{}
+	for _, reading := range readings {
+		if reading.Condition == "" {
+			continue
+		}
+		counts[reading.Condition]++
+		descriptions[reading.Condition] = reading.Description
+	}
+
+	best, bestCount := "", 0
+	for condition, count := range counts {
+		switch {
+		case count > bestCount,
+			count == bestCount && conditionRank(condition) > conditionRank(best):
+			best, bestCount = condition, count
+		}
+	}
+	return best, descriptions[best]
+}
+
+// conditionRank orders conditions by how much they change what you would do
+// about the day. It only ever breaks a tie.
+func conditionRank(condition string) int {
+	switch condition {
+	case "Thunderstorm":
+		return 6
+	case "Snow":
+		return 5
+	case "Rain":
+		return 4
+	case "Drizzle":
+		return 3
+	case "Clouds":
+		return 2
+	case "Clear":
+		return 1
+	}
+	return 0
+}
