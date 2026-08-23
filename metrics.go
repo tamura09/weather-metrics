@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"sort"
@@ -217,12 +218,8 @@ func gauge(name string, labels map[string]string, value float64, timestamp int64
 
 func merge(base, extra map[string]string) map[string]string {
 	combined := make(map[string]string, len(base)+len(extra))
-	for name, value := range base {
-		combined[name] = value
-	}
-	for name, value := range extra {
-		combined[name] = value
-	}
+	maps.Copy(combined, base)
+	maps.Copy(combined, extra)
 	return combined
 }
 
