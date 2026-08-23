@@ -233,8 +233,7 @@ func (a *app) saveForecast(ctx context.Context, snapshot forecastSnapshot) error
 func (a *app) loadJSON(ctx context.Context, key string, into any) (bool, error) {
 	out, err := a.objects.GetObject(ctx, &s3.GetObjectInput{Bucket: &a.bucket, Key: &key})
 	if err != nil {
-		var missing *types.NoSuchKey
-		if errors.As(err, &missing) {
+		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return false, nil
 		}
 		return false, err

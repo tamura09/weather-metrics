@@ -334,9 +334,9 @@ func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, 
 				order = append(order, date)
 			}
 			if day.Observations == 0 {
-				day.ObservedMax = ptr(reading.Temp)
-				day.ObservedMin = ptr(reading.Temp)
-				day.ObservedMean = ptr(0)
+				day.ObservedMax = new(reading.Temp)
+				day.ObservedMin = new(reading.Temp)
+				day.ObservedMean = new(0.0)
 			}
 			// Rainfall cannot be accumulated one reading at a time -- rain_1h is
 			// a rolling total, so the readings overlap. Collected here and
@@ -365,7 +365,7 @@ func (a *app) servedDays(ctx context.Context, from, to time.Time) ([]servedDay, 
 			*day.ObservedMean = round(*day.ObservedMean/float64(day.Observations), 2)
 			*day.ObservedMax = round(*day.ObservedMax, 2)
 			*day.ObservedMin = round(*day.ObservedMin, 2)
-			day.ObservedRain = ptr(accumulateRain(readingsByDate[date], a.zone,
+			day.ObservedRain = new(accumulateRain(readingsByDate[date], a.zone,
 				func(r observation) float64 { return r.Rain1h + r.Snow1h }))
 		}
 		days = append(days, *day)
@@ -486,17 +486,17 @@ func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Loc
 	summary.DataLagSeconds = round(now.Sub(latest.Time).Seconds(), 0)
 
 	if change, ok := changeOver(readings, now, pressureWindow, pressureTolerance, func(r observation) float64 { return r.Pressure }); ok {
-		summary.PressureChange = ptr(round(change, 2))
+		summary.PressureChange = new(round(change, 2))
 	}
 	if change, ok := changeOver(readings, now, temperatureWindow, temperatureTolerance, func(r observation) float64 { return r.Temp }); ok {
-		summary.TempChange24h = ptr(round(change, 2))
+		summary.TempChange24h = new(round(change, 2))
 	}
 
 	today := startOfDay(now, zone)
 	sinceMidnight := between(readings, today, today.AddDate(0, 0, 1))
 	if high, low, ok := extremes(sinceMidnight, func(r observation) float64 { return r.Temp }); ok {
-		summary.ObservedMax = ptr(round(high, 2))
-		summary.ObservedMin = ptr(round(low, 2))
+		summary.ObservedMax = new(round(high, 2))
+		summary.ObservedMin = new(round(low, 2))
 	}
 	summary.RainToday = accumulateRain(sinceMidnight, zone, func(r observation) float64 { return r.Rain1h })
 

@@ -128,13 +128,6 @@ func round(value float64, places int) float64 {
 	return math.Round(value*scale) / scale
 }
 
-// ptr is for the served fields that must serialise as null rather than zero
-// when nothing was measured. Go has no other way to say "absent" for a float
-// in a JSON struct.
-func ptr(value float64) *float64 {
-	return &value
-}
-
 // accumulateRain totals the rainfall a set of readings covers, which is not the
 // sum of their rain_1h values. OpenWeather reports rain_1h as a *rolling* total
 // for the hour ending at the reading, so at a ten-minute cadence six consecutive
