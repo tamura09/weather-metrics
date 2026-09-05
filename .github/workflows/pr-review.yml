@@ -1,0 +1,48 @@
+# 人間が作った PR を Claude がレビューする。
+#
+# 実体は再利用可能ワークフローに切り出してある。
+#   https://github.com/tamura09/claude-pr-review
+#
+# レビューを投稿するだけで、マージも承認もしない。判断するのは人間。
+#
+# レビューされない PR が2種類ある。
+#   - fork からの PR。GitHub が secrets も id-token も渡さないため、この経路では
+#     起動できない。呼び出し先が head.repo をみて明示的にスキップする
+#   - Dependabot の PR。同じ制限を受けるので、既定の skip_authors に入っている
+#
+# OAuth トークンはこのリポジトリの secret には置かない。AWS の SSM
+# (/claude-pr-review/oauth-token) に1本だけ置いてあり、呼び出された
+# ワークフローが OIDC で読む。下の id-token: write がそのために要る。
+name: PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# 呼び出される側の permissions は呼び出し側を超えられないため、ここで明示する
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  # claude-review チェックを PR のチェック一覧に出すため
+  statuses: write
+  # OAuth トークンを SSM から読むための OIDC トークン発行
+  id-token: write
+
+# 連続 push のたびに走らせず、最新のコミットだけレビューする
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # 可変タグ @v1 を意図して使っている。id-token: write を渡す呼び出し先なので
+    # 本来はコミット SHA で固定するところ。今どちらのリポジトリも書き込めるのは
+    # オーナーだけで、タグを書き換えられる相手はこのファイル自体も書き換えられる
+    # から、SHA 固定で防げる相手が今はいない。代わりにワークフローを直すたび
+    # 全リポジトリの更新が要る。
+    #
+    # 前提は「両方のリポジトリの書き込み権限者が一致していること」。collaborator
+    # はリポジトリ単位なので、どちらか一方にだけ人を足した時点でこの前提は崩れる。
+    # そうなったら SHA 固定に切り替える。第三者のワークフローは最初から固定する。
+    uses: tamura09/claude-pr-review/.github/workflows/pr-review.yml@v1
