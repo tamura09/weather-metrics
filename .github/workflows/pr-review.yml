@@ -28,6 +28,8 @@ permissions:
   statuses: write
   # OAuth トークンを SSM から読むための OIDC トークン発行
   id-token: write
+  # CI の実行結果を Claude に読ませるため (github_ci MCP に必要)
+  actions: read
 
 # 連続 push のたびに走らせず、最新のコミットだけレビューする
 concurrency:
