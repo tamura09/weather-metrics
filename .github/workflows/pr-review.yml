@@ -47,4 +47,4 @@ jobs:
     # 前提は「両方のリポジトリの書き込み権限者が一致していること」。collaborator
     # はリポジトリ単位なので、どちらか一方にだけ人を足した時点でこの前提は崩れる。
     # そうなったら SHA 固定に切り替える。第三者のワークフローは最初から固定する。
-    uses: tamura09/claude-pr-review/.github/workflows/pr-review.yml@v1
+    uses: tamura09/claude-pr-review/.github/workflows/pr-review.yml@51c2815dac669475a6b1bc4ed602b064bdde30ee # v1
