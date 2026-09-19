@@ -1,7 +1,7 @@
 # 人間が作った PR を Claude がレビューする。
 #
 # 実体は再利用可能ワークフローに切り出してある。
-#   https://github.com/tamura09/claude-pr-review
+#   https://github.com/tamura09/pr-review
 #
 # レビューを投稿するだけで、マージも承認もしない。判断するのは人間。
 #
@@ -47,4 +47,4 @@ jobs:
     # 固定したままだと上流の修正が届かなくなるので、digest の追随は Renovate の
     # 共有プリセット (helpers:pinGitHubActionDigests) に任せる。固定と追随は
     # セットで、片方だけにはしない。
-    uses: tamura09/claude-pr-review/.github/workflows/pr-review.yml@a987d95ec0b6f182b84a2b8ad12f629da6c41845 # v1
+    uses: tamura09/pr-review/.github/workflows/pr-review.yml@a987d95ec0b6f182b84a2b8ad12f629da6c41845 # v1
