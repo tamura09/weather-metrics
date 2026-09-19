@@ -1,3 +1,4 @@
+# Reusable workflow repository renamed to tamura09/pr-review.
 # 人間が作った PR を Claude がレビューする。
 #
 # 実体は再利用可能ワークフローに切り出してある。
