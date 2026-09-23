@@ -83,3 +83,17 @@ jobs:
         run: |
           aws s3 cp weather-metrics.zip \
             "s3://aws-terraform-lambda-artifacts-${AWS_ACCOUNT_ID}-us-east-1/lambda/weather-metrics.zip"
+
+      # Terraform in tamura09/terraform creates the functions but does not track
+      # which artifact they run, so this step is what puts new code on them.
+      # weather-metrics-api runs the same artifact in its read-only mode.
+      - name: Deploy Lambda function code
+        run: |
+          for function in weather-metrics weather-metrics-api; do
+            aws lambda update-function-code \
+              --function-name "${function}" \
+              --s3-bucket "aws-terraform-lambda-artifacts-${AWS_ACCOUNT_ID}-us-east-1" \
+              --s3-key "lambda/weather-metrics.zip" \
+              --query CodeSha256 --output text --no-cli-pager
+            aws lambda wait function-updated --function-name "${function}"
+          done
