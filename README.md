@@ -228,5 +228,8 @@ endpoints. Subscribing requires a card on file; the first 1,000 calls a day are
 free, and an account-level call limit can be set in the OpenWeather console to
 cap spend.
 
-Deployed and scheduled via Terraform in `tamura09/aws-terraform`
-(`regions/us-east-1/lambda.tf`).
+The function and its schedule are defined in Terraform in `tamura09/terraform`
+(`modules/aws-us-east-1/lambda.tf`). The code is deployed by this repository's
+Build: on push to `main` it uploads the artifact to S3 and runs
+`aws lambda update-function-code`. Terraform does not track the artifact
+version.
