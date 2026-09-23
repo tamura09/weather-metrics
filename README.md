@@ -213,7 +213,7 @@ Function URL has no AWS auth of its own because Infinity cannot sign SigV4.
 
 ## Secrets
 
-The SSM parameters are declared in `tamura09/aws-terraform` but their values are
+The SSM parameters are declared in `tamura09/terraform` but their values are
 set outside Terraform, so they never land in state:
 
 ```bash
