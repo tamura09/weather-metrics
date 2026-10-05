@@ -19,7 +19,7 @@ concurrency:
 
 env:
   AWS_ACCOUNT_ID: "222165754930"
-  AWS_ROLE_TO_ASSUME: "arn:aws:iam::222165754930:role/github-actions-lambda-artifacts"
+  AWS_ROLE_TO_ASSUME: "arn:aws:iam::222165754930:role/github-actions-lambda-deploy-weather-metrics"
 
 jobs:
   test:
