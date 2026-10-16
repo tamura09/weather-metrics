@@ -33,8 +33,14 @@ const (
 	dailyLookbackDays = 2
 )
 
+// parameterStore is the one SSM call this function makes, narrowed so tests
+// can stand in for it.
+type parameterStore interface {
+	GetParameter(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
+}
+
 type app struct {
-	parameters *ssm.Client
+	parameters parameterStore
 	objects    *s3.Client
 	httpClient *http.Client
 	now        func() time.Time
