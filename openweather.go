@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -279,13 +280,13 @@ func (o *openWeather) get(ctx context.Context, endpoint string, query url.Values
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, withoutURL(parsed.Path, err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, withoutURL(parsed.Path, err)
 	}
 	defer resp.Body.Close()
 
@@ -299,6 +300,17 @@ func (o *openWeather) get(ctx context.Context, endpoint string, query url.Values
 		return nil, fmt.Errorf("OpenWeather %s returned %d: %s", parsed.Path, resp.StatusCode, truncate(body, 500))
 	}
 	return body, nil
+}
+
+// withoutURL drops the URL that net/http puts into a request error. The key
+// and coordinates are in the query string, so the URL is not safe to put in an
+// error that lands in CloudWatch Logs.
+func withoutURL(path string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("OpenWeather %s %s: %w", urlErr.Op, path, urlErr.Err)
+	}
+	return err
 }
 
 func truncate(body []byte, limit int) string {

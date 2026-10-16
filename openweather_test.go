@@ -150,6 +150,23 @@ func TestAirPollutionDecodesComponents(t *testing.T) {
 	}
 }
 
+func TestTransportErrorsOmitTheQueryString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	client := &openWeather{client: server.Client(), apiKey: "super-secret-key", oneCallBaseURL: server.URL, lat: 33.59, lon: 130.4, lang: "ja"}
+	server.Close()
+
+	_, err := client.current(context.Background())
+	if err == nil {
+		t.Fatal("want an error from a closed server")
+	}
+	if strings.Contains(err.Error(), "super-secret-key") {
+		t.Errorf("error leaked the API key: %v", err)
+	}
+	if strings.Contains(err.Error(), "33.59") || strings.Contains(err.Error(), "130.4") {
+		t.Errorf("error leaked the coordinates: %v", err)
+	}
+}
+
 func TestCurrentTimeoutIsRespected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
