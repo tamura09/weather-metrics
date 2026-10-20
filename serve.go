@@ -31,6 +31,12 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 		log.Printf("read API token: %v", err)
 		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "server misconfigured"})
 	}
+	// parameterString trims, so a parameter holding only whitespace comes back
+	// empty -- and an empty token would match a request that sent no header.
+	if expected == "" {
+		log.Printf("read API token: %s is empty", parameterName)
+		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "server misconfigured"})
+	}
 
 	presented := ""
 	for name, value := range request.Headers {
@@ -39,7 +45,7 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 			break
 		}
 	}
-	if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
+	if presented == "" || subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
 		return jsonResponse(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	}
 
