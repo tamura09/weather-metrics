@@ -24,7 +24,7 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04-arm
     defaults:
       run:
         shell: bash
@@ -49,7 +49,7 @@ jobs:
     name: Deploy
     needs: test
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04-arm
     defaults:
       run:
         shell: bash
