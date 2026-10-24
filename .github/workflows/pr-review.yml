@@ -48,4 +48,4 @@ jobs:
     # 固定したままだと上流の修正が届かなくなるので、digest の追随は Renovate の
     # 共有プリセット (helpers:pinGitHubActionDigests) に任せる。固定と追随は
     # セットで、片方だけにはしない。
-    uses: tamura09/pr-review/.github/workflows/pr-review.yml@ae8736422d4858681968a1b23782198381e078cd # v1
+    uses: tamura09/pr-review/.github/workflows/pr-review.yml@8c8bb9e81c17495259eb1e0e70a4e20af16e97d0 # v1
