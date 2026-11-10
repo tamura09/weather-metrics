@@ -216,6 +216,8 @@ github.com/prometheus/prometheus v0.314.0 h1:YjsimqsIi6/mOtzZcrPEYUALO6zpfaht9O5
 github.com/prometheus/prometheus v0.314.0/go.mod h1:zjg3pMTAkY0/JG8jy/h8/YgSQUVB+aCXMhUqN6l64jg=
 github.com/prometheus/prometheus v0.315.0 h1:sFGZWmC2Hk9N1NBJGCnXYZb5hyLCq8yuAMoEjLAg6ac=
 github.com/prometheus/prometheus v0.315.0/go.mod h1:B+80h4JO0zXpoFCiWStHtpsAWrEOwY24B9/CLgzUIuc=
+github.com/prometheus/prometheus v0.315.1 h1:ZXaNKyUO5szJhhw7gKiP6b2jpx1QkS0S3CI1R1bPqIA=
+github.com/prometheus/prometheus v0.315.1/go.mod h1:6ISUXTjRxj9U2d8ssng8khR1b2dDJ+MpftZD190149I=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
@@ -241,6 +243,8 @@ golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
 golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
 golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
 golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
+golang.org/x/text v0.42.0 h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+golang.org/x/text v0.42.0/go.mod h1:ojzP1Z+2QtioaF8DTtO8K5q7JWVVYwZKenzujK0Zd0E=
 golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
 golang.org/x/tools v0.0.0-20191119224855-298f0cb1881e/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=
 golang.org/x/tools v0.0.0-20200619180055-7c47624df98f/go.mod h1:EkVYQZoAsY45+roYkvgYkIh4xh/qjgUK9TdY2XT94GE=
