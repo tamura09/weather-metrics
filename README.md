@@ -1,7 +1,7 @@
 # weather-metrics
 
 Scheduled Lambda that reads OpenWeather's One Call API 4.0 and Air Pollution
-API for one location, pushes the present conditions to Grafana Cloud as
+API for each configured location, pushes the present conditions to Grafana Cloud as
 Prometheus metrics, and archives observations and the daily timeline to S3. The
 same artifact also deploys a second, read-only mode (`WEATHER_MODE=serve`) that
 serves that archive over HTTP for Grafana's Infinity datasource.
@@ -35,8 +35,10 @@ timeline is its own billed call. A scheduled run therefore makes exactly three:
 | `/timeline/1day?start=<2 days ago>` | 10 records | Reaches back far enough to re-read yesterday and forward eight days. |
 | `/timeline/1h?start=<now>` | 20 records | Just under a day ahead, which is the horizon the hourly panels show. |
 
-At a ten-minute schedule that is 432 calls a day against the free 1,000. The
-Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its call
+At a fifteen-minute schedule that is 288 calls a day per location, and 864 for
+the three this collects (盛岡市, 宮古市, 江東区) against the free 1,000. Ten
+minutes, the cadence it started with, would be 1,296 and spill into paid calls.
+The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its call
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
@@ -65,9 +67,31 @@ are the API's, and become history once the date settles, while
 readings this collector took. A backfilled date has the former and not the
 latter — `observations` on the row says which.
 
+## Locations
+
+One collect function serves every location. `WEATHER_LOCATIONS` lists the
+location IDs, and each scheduled invocation names the one it is for in its event
+(`{"location":"miyako"}`), so the locations are collected in separate
+invocations and one location's failure never costs another its reading.
+
+The ID is used three ways, which is why it is a short slug
+(`^[a-z][a-z0-9-]{0,31}$`):
+
+- the `location` label on every metric,
+- the archive folder, `ARCHIVE_PREFIX` + ID + `/`,
+- the `{location}` placeholder in `WEATHER_LATITUDE_PARAMETER_NAME` and
+  `WEATHER_LONGITUDE_PARAMETER_NAME`. With several locations the placeholder is
+  required, so they cannot all read the same coordinates by mistake.
+
+Serve mode takes the same ID as `?location=` and refuses a request without one.
+
+Leaving `WEATHER_LOCATIONS` unset keeps the original single-location behaviour:
+the `WEATHER_LOCATION` label, the archive at `ARCHIVE_PREFIX` itself, and the
+parameter names as given.
+
 ## Metrics
 
-All gauges, all labelled `job="weather-metrics"` and `location=$WEATHER_LOCATION`.
+All gauges, all labelled `job="weather-metrics"` and `location=<location ID>`.
 
 | Metric | Notes |
 | --- | --- |
@@ -114,7 +138,8 @@ the API does not return a tendency.
 | `ARCHIVE_PREFIX` | no | Key prefix, defaults to `weather/`. |
 | `WEATHER_MODE` | no | `collect` (default) or `serve`. |
 | `WEATHER_LATITUDE_PARAMETER_NAME`, `WEATHER_LONGITUDE_PARAMETER_NAME` | collect | SSM parameters holding the coordinates to read. In SSM rather than the environment for the same reason kyuden-metrics keeps its 供給地点特定番号 there -- not a credential, but a Lambda's environment variables are readable by anyone who can describe the function. Range-checked on read, so a parameter left at its Terraform placeholder fails loudly instead of collecting the weather at 0,0. |
-| `WEATHER_LOCATION` | no | Label on every metric, defaults to `home`. |
+| `WEATHER_LOCATIONS` | no | Comma-separated location IDs. See [Locations](#locations). Unset means single-location mode. |
+| `WEATHER_LOCATION` | no | Label on every metric in single-location mode, defaults to `home`. |
 | `WEATHER_TIMEZONE_OFFSET_SECONDS` | no | UTC offset the day boundaries are cut on, defaults to `32400` (JST). An offset rather than a zone name because the Lambda runtime ships no tzdata; exact for Japan, which has no DST. |
 | `WEATHER_LANG` | no | Language for `description`, defaults to `ja`. |
 | `OPENWEATHER_API_KEY_PARAMETER_NAME` | collect | SSM parameter holding the One Call by Call API key. |
@@ -125,6 +150,8 @@ the API does not return a tendency.
 | `OPENWEATHER_ONECALL_BASE_URL`, `OPENWEATHER_AIR_POLLUTION_BASE_URL` | no | Overrides for testing. |
 
 ## The archive
+
+`<prefix>` below is `ARCHIVE_PREFIX` + location ID + `/`, e.g. `weather/miyako/`.
 
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }
@@ -176,7 +203,7 @@ forecast comes from, so the dashboard does not have to start empty and grow:
 ```bash
 aws lambda invoke --region us-east-1 --function-name weather-metrics \
   --cli-read-timeout 960 \
-  --payload '{"backfill_from":"2024-01-01","backfill_to":"2026-08-07"}' --cli-binary-format raw-in-base64-out \
+  --payload '{"location":"miyako","backfill_from":"2024-01-01","backfill_to":"2026-08-07"}' --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
 
@@ -192,6 +219,9 @@ The same artifact deployed with `WEATHER_MODE=serve` sits behind a Lambda
 Function URL and returns the archive as JSON for the Grafana Infinity
 datasource. It is a separate function so the read-only path never holds the
 OpenWeather key or the Grafana push token.
+
+Every query also takes `location=<location ID>`, which is required when
+`WEATHER_LOCATIONS` is set.
 
 | Query | Returns |
 | --- | --- |
@@ -218,8 +248,8 @@ set outside Terraform, so they never land in state:
 
 ```bash
 aws ssm put-parameter --region us-east-1 --name /weather-metrics/openweather-api-key --type SecureString --overwrite --value 'YOUR_API_KEY'
-aws ssm put-parameter --region us-east-1 --name /weather-metrics/latitude --type SecureString --overwrite --value '33.5904'
-aws ssm put-parameter --region us-east-1 --name /weather-metrics/longitude --type SecureString --overwrite --value '130.4017'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/locations/miyako/latitude --type SecureString --overwrite --value '39.6414'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/locations/miyako/longitude --type SecureString --overwrite --value '141.9571'
 ```
 
 The API key must be on a **One Call by Call** subscription — a plain free-tier
