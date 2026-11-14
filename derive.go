@@ -130,10 +130,11 @@ func round(value float64, places int) float64 {
 
 // accumulateRain totals the rainfall a set of readings covers, which is not the
 // sum of their rain_1h values. OpenWeather reports rain_1h as a *rolling* total
-// for the hour ending at the reading, so at a ten-minute cadence six consecutive
-// readings all describe overlapping windows of the same rain. Summing them
-// counted a wet day at more than twice its real total: 4.21mm against the 1.95mm
-// the settled daily record gives for 2026-08-09.
+// for the hour ending at the reading, so at a fifteen-minute cadence four
+// consecutive readings all describe overlapping windows of the same rain.
+// Summing them (at the original ten-minute cadence) counted a wet day at more
+// than twice its real total: 4.21mm against the 1.95mm the settled daily record
+// gives for 2026-08-09.
 //
 // Taking the largest reading within each clock hour and summing those recovers
 // the figure to within a rounding error on a settled day. It is still an

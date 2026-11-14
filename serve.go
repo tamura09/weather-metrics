@@ -53,6 +53,15 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "ARCHIVE_BUCKET is not set"})
 	}
 
+	scoped, err := a.forLocation(request.QueryStringParameters["location"])
+	if err != nil {
+		return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return scoped.serveResource(ctx, request)
+}
+
+// serveResource answers one request against a single location's archive.
+func (a *app) serveResource(ctx context.Context, request events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	now := a.now()
 	resource := strings.ToLower(strings.TrimSpace(request.QueryStringParameters["resource"]))
 
@@ -738,7 +747,7 @@ func dayOfMonth(date string) int {
 
 // servedObservedHour is one clock hour of our own readings, rolled up. It is the
 // hourly counterpart of the daily rows, and exists for the same reason: at a
-// ten-minute cadence a month of raw readings is four thousand rows to draw one
+// fifteen-minute cadence a month of raw readings is three thousand rows to draw one
 // line, where the hour it happened in is the resolution anyone actually reads.
 //
 // This is measured weather, not forecast -- the `hourly` resource is the
@@ -763,7 +772,7 @@ type servedObservedHour struct {
 	SnowMm      float64 `json:"snow_mm"`
 	Condition   string  `json:"condition"`
 	Description string  `json:"description"`
-	// Readings is 6 on a complete hour at the ten-minute schedule. Fewer means
+	// Readings is 4 on a complete hour at the fifteen-minute schedule. Fewer means
 	// runs were missed, which is worth being able to see rather than guess at.
 	Readings int `json:"readings"`
 }

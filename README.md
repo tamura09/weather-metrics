@@ -1,7 +1,7 @@
 # weather-metrics
 
 Scheduled Lambda that reads OpenWeather's One Call API 4.0 and Air Pollution
-API for one location, pushes the present conditions to Grafana Cloud as
+API for each configured location, pushes the present conditions to Grafana Cloud as
 Prometheus metrics, and archives observations and the daily timeline to S3. The
 same artifact also deploys a second, read-only mode (`WEATHER_MODE=serve`) that
 serves that archive over HTTP for Grafana's Infinity datasource.
@@ -35,8 +35,10 @@ timeline is its own billed call. A scheduled run therefore makes exactly three:
 | `/timeline/1day?start=<2 days ago>` | 10 records | Reaches back far enough to re-read yesterday and forward eight days. |
 | `/timeline/1h?start=<now>` | 20 records | Just under a day ahead, which is the horizon the hourly panels show. |
 
-At a ten-minute schedule that is 432 calls a day against the free 1,000. The
-Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its call
+At a fifteen-minute schedule that is 288 calls a day per location, and 864 for
+the three this collects (盛岡市, 宮古市, 江東区) against the free 1,000. Ten
+minutes, the cadence it started with, would be 1,296 and spill into paid calls.
+The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its call
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
@@ -61,13 +63,54 @@ makes either readable, and the gap between them is itself worth watching.
 
 The same applies per date in the archive: `temp_max`/`temp_min` on a daily row
 are the API's, and become history once the date settles, while
-`observed_temp_max`/`observed_temp_min` are computed from the ten-minute
-readings this collector took. A backfilled date has the former and not the
+`observed_temp_max`/`observed_temp_min` are computed from the fifteen-minute
+readings this collector took (ten-minute before the move to several locations). A backfilled date has the former and not the
 latter — `observations` on the row says which.
+
+## Locations
+
+One collect function serves every location. `WEATHER_LOCATIONS` lists the
+location IDs, and each scheduled invocation names the one it is for in its event
+(`{"location":"miyako"}`), so the locations are collected in separate
+invocations and one location's failure never costs another its reading.
+
+The ID is used three ways, which is why it is a short slug
+(`^[a-z][a-z0-9-]{0,31}$`):
+
+- the `location` label on every metric,
+- the archive folder, `ARCHIVE_PREFIX` + ID + `/`,
+- the `{location}` placeholder in `WEATHER_LATITUDE_PARAMETER_NAME` and
+  `WEATHER_LONGITUDE_PARAMETER_NAME`. With several locations the placeholder is
+  required, so they cannot all read the same coordinates by mistake.
+
+Serve mode takes the same ID as `?location=` and refuses a request without one.
+
+Leaving `WEATHER_LOCATIONS` unset keeps the original single-location behaviour:
+the `WEATHER_LOCATION` label, the archive at `ARCHIVE_PREFIX` itself, and the
+parameter names as given. In that mode no event or query may name a location.
+
+### Moving a single-location archive to a location
+
+Setting `WEATHER_LOCATIONS` moves every read and write to `ARCHIVE_PREFIX` +
+ID + `/`, so the archive at `ARCHIVE_PREFIX` itself is no longer read by
+either mode, and a dashboard query without `location=` gets a 400. To keep the
+history, copy it under the location it was collected for once the new
+configuration is live (so the last old-mode run is included), and before that
+location's coordinates are filled in (so no run has written there yet):
+
+```bash
+aws s3 cp --recursive s3://<bucket>/weather/observations/ s3://<bucket>/weather/morioka/observations/
+aws s3 cp --recursive s3://<bucket>/weather/daily/ s3://<bucket>/weather/morioka/daily/
+aws s3 cp s3://<bucket>/weather/forecast.json s3://<bucket>/weather/morioka/forecast.json
+```
+
+The dashboard's queries need `location=` added in the same change. Metrics move
+from `location="home"` to the ID, so the Prometheus panels start over for the
+14 days the old series is kept.
 
 ## Metrics
 
-All gauges, all labelled `job="weather-metrics"` and `location=$WEATHER_LOCATION`.
+All gauges, all labelled `job="weather-metrics"` and `location=<location ID>`.
 
 | Metric | Notes |
 | --- | --- |
@@ -114,7 +157,8 @@ the API does not return a tendency.
 | `ARCHIVE_PREFIX` | no | Key prefix, defaults to `weather/`. |
 | `WEATHER_MODE` | no | `collect` (default) or `serve`. |
 | `WEATHER_LATITUDE_PARAMETER_NAME`, `WEATHER_LONGITUDE_PARAMETER_NAME` | collect | SSM parameters holding the coordinates to read. In SSM rather than the environment for the same reason kyuden-metrics keeps its 供給地点特定番号 there -- not a credential, but a Lambda's environment variables are readable by anyone who can describe the function. Range-checked on read, so a parameter left at its Terraform placeholder fails loudly instead of collecting the weather at 0,0. |
-| `WEATHER_LOCATION` | no | Label on every metric, defaults to `home`. |
+| `WEATHER_LOCATIONS` | no | Comma-separated location IDs. See [Locations](#locations). Unset means single-location mode. |
+| `WEATHER_LOCATION` | no | Label on every metric in single-location mode, defaults to `home`. |
 | `WEATHER_TIMEZONE_OFFSET_SECONDS` | no | UTC offset the day boundaries are cut on, defaults to `32400` (JST). An offset rather than a zone name because the Lambda runtime ships no tzdata; exact for Japan, which has no DST. |
 | `WEATHER_LANG` | no | Language for `description`, defaults to `ja`. |
 | `OPENWEATHER_API_KEY_PARAMETER_NAME` | collect | SSM parameter holding the One Call by Call API key. |
@@ -125,6 +169,8 @@ the API does not return a tendency.
 | `OPENWEATHER_ONECALL_BASE_URL`, `OPENWEATHER_AIR_POLLUTION_BASE_URL` | no | Overrides for testing. |
 
 ## The archive
+
+`<prefix>` below is `ARCHIVE_PREFIX` + location ID + `/`, e.g. `weather/miyako/`.
 
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }
@@ -144,9 +190,9 @@ carried across runs because re-fetching it costs a billed call.
 
 ## Rainfall is not a sum
 
-`rain_1h` is a **rolling** one-hour total, so at a ten-minute cadence six
+`rain_1h` is a **rolling** one-hour total, so at a fifteen-minute cadence four
 consecutive readings all describe overlapping windows of the same rain. Adding
-them up counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
+them up (at the original ten-minute cadence) counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
 gives — more than double.
 
 Every observed rainfall figure therefore takes the largest reading within each
@@ -176,9 +222,12 @@ forecast comes from, so the dashboard does not have to start empty and grow:
 ```bash
 aws lambda invoke --region us-east-1 --function-name weather-metrics \
   --cli-read-timeout 960 \
-  --payload '{"backfill_from":"2024-01-01","backfill_to":"2026-08-07"}' --cli-binary-format raw-in-base64-out \
+  --payload '{"location":"miyako","backfill_from":"2024-01-01","backfill_to":"2026-08-07"}' --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
+
+`location` is required when `WEATHER_LOCATIONS` is set and must be left out
+when it is not.
 
 It walks forward a page (10 days) at a time, flushing as it goes, and stops at
 the page limit or before the invocation times out rather than losing work. The
@@ -193,12 +242,15 @@ Function URL and returns the archive as JSON for the Grafana Infinity
 datasource. It is a separate function so the read-only path never holds the
 OpenWeather key or the Grafana push token.
 
+Every query also takes `location=<location ID>`, which is required when
+`WEATHER_LOCATIONS` is set.
+
 | Query | Returns |
 | --- | --- |
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
-| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (6 on a complete hour). Starts when the collector did, unlike the backfilled daily history. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour at the fifteen-minute schedule; 6 for hours collected before it, at ten minutes). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
@@ -218,8 +270,8 @@ set outside Terraform, so they never land in state:
 
 ```bash
 aws ssm put-parameter --region us-east-1 --name /weather-metrics/openweather-api-key --type SecureString --overwrite --value 'YOUR_API_KEY'
-aws ssm put-parameter --region us-east-1 --name /weather-metrics/latitude --type SecureString --overwrite --value '33.5904'
-aws ssm put-parameter --region us-east-1 --name /weather-metrics/longitude --type SecureString --overwrite --value '130.4017'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/locations/miyako/latitude --type SecureString --overwrite --value '39.6414'
+aws ssm put-parameter --region us-east-1 --name /weather-metrics/locations/miyako/longitude --type SecureString --overwrite --value '141.9571'
 ```
 
 The API key must be on a **One Call by Call** subscription — a plain free-tier

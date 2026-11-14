@@ -49,11 +49,16 @@ type app struct {
 	prefix   string
 	zone     *time.Location
 	location string
+	// locations is WEATHER_LOCATIONS. Empty means single-location mode; see
+	// locations.go.
+	locations []string
 }
 
-// collectEvent is empty for a scheduled run. The backfill fields turn the same
-// function into a one-shot history loader; see backfill.go.
+// collectEvent carries the location a scheduled run is for, when several are
+// configured. The backfill fields turn the same function into a one-shot
+// history loader; see backfill.go.
 type collectEvent struct {
+	Location     string `json:"location"`
 	BackfillFrom string `json:"backfill_from"` // YYYY-MM-DD
 	BackfillTo   string `json:"backfill_to"`   // YYYY-MM-DD, defaults to today
 }
@@ -70,6 +75,11 @@ func main() {
 		log.Fatalf("resolve timezone: %v", err)
 	}
 
+	locations, err := parseLocations(os.Getenv("WEATHER_LOCATIONS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	instance := &app{
 		parameters: ssm.NewFromConfig(cfg),
 		objects:    s3.NewFromConfig(cfg),
@@ -79,6 +89,7 @@ func main() {
 		prefix:     envOr("ARCHIVE_PREFIX", "weather/"),
 		zone:       zone,
 		location:   envOr("WEATHER_LOCATION", "home"),
+		locations:  locations,
 	}
 
 	if strings.EqualFold(envOr("WEATHER_MODE", modeCollect), modeServe) {
@@ -103,6 +114,14 @@ func configuredZone() (*time.Location, error) {
 }
 
 func (a *app) collect(ctx context.Context, event collectEvent) (any, error) {
+	scoped, err := a.forLocation(event.Location)
+	if err != nil {
+		return nil, err
+	}
+	return scoped.collectLocation(ctx, event)
+}
+
+func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, error) {
 	if a.bucket == "" {
 		return nil, errors.New("ARCHIVE_BUCKET is required")
 	}
@@ -188,6 +207,7 @@ func (a *app) collect(ctx context.Context, event collectEvent) (any, error) {
 	}
 
 	return map[string]any{
+		"location":       a.location,
 		"observed_at":    reading.Time,
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
@@ -251,7 +271,7 @@ func (a *app) openWeather(ctx context.Context) (*openWeather, error) {
 	// reason kyuden-metrics keeps its 供給地点特定番号 there: not a credential,
 	// but it is where someone lives, and a Lambda's environment variables are
 	// readable by anyone who can describe the function.
-	latParameter, err := requiredEnv("WEATHER_LATITUDE_PARAMETER_NAME")
+	latParameter, err := a.locationParameterName("WEATHER_LATITUDE_PARAMETER_NAME")
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +279,7 @@ func (a *app) openWeather(ctx context.Context) (*openWeather, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read latitude parameter: %w", err)
 	}
-	lonParameter, err := requiredEnv("WEATHER_LONGITUDE_PARAMETER_NAME")
+	lonParameter, err := a.locationParameterName("WEATHER_LONGITUDE_PARAMETER_NAME")
 	if err != nil {
 		return nil, err
 	}
