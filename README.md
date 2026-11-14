@@ -63,8 +63,8 @@ makes either readable, and the gap between them is itself worth watching.
 
 The same applies per date in the archive: `temp_max`/`temp_min` on a daily row
 are the API's, and become history once the date settles, while
-`observed_temp_max`/`observed_temp_min` are computed from the ten-minute
-readings this collector took. A backfilled date has the former and not the
+`observed_temp_max`/`observed_temp_min` are computed from the fifteen-minute
+readings this collector took (ten-minute before the move to several locations). A backfilled date has the former and not the
 latter — `observations` on the row says which.
 
 ## Locations
@@ -87,7 +87,26 @@ Serve mode takes the same ID as `?location=` and refuses a request without one.
 
 Leaving `WEATHER_LOCATIONS` unset keeps the original single-location behaviour:
 the `WEATHER_LOCATION` label, the archive at `ARCHIVE_PREFIX` itself, and the
-parameter names as given.
+parameter names as given. In that mode no event or query may name a location.
+
+### Moving a single-location archive to a location
+
+Setting `WEATHER_LOCATIONS` moves every read and write to `ARCHIVE_PREFIX` +
+ID + `/`, so the archive at `ARCHIVE_PREFIX` itself is no longer read by
+either mode, and a dashboard query without `location=` gets a 400. To keep the
+history, copy it under the location it was collected for once the new
+configuration is live (so the last old-mode run is included), and before that
+location's coordinates are filled in (so no run has written there yet):
+
+```bash
+aws s3 cp --recursive s3://<bucket>/weather/observations/ s3://<bucket>/weather/morioka/observations/
+aws s3 cp --recursive s3://<bucket>/weather/daily/ s3://<bucket>/weather/morioka/daily/
+aws s3 cp s3://<bucket>/weather/forecast.json s3://<bucket>/weather/morioka/forecast.json
+```
+
+The dashboard's queries need `location=` added in the same change. Metrics move
+from `location="home"` to the ID, so the Prometheus panels start over for the
+14 days the old series is kept.
 
 ## Metrics
 
@@ -171,9 +190,9 @@ carried across runs because re-fetching it costs a billed call.
 
 ## Rainfall is not a sum
 
-`rain_1h` is a **rolling** one-hour total, so at a ten-minute cadence six
+`rain_1h` is a **rolling** one-hour total, so at a fifteen-minute cadence four
 consecutive readings all describe overlapping windows of the same rain. Adding
-them up counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
+them up (at the original ten-minute cadence) counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
 gives — more than double.
 
 Every observed rainfall figure therefore takes the largest reading within each
@@ -207,6 +226,9 @@ aws lambda invoke --region us-east-1 --function-name weather-metrics \
   /dev/stdout
 ```
 
+`location` is required when `WEATHER_LOCATIONS` is set and must be left out
+when it is not.
+
 It walks forward a page (10 days) at a time, flushing as it goes, and stops at
 the page limit or before the invocation times out rather than losing work. The
 response reports `completed_through`, so a long range is resumed by invoking
@@ -228,7 +250,7 @@ Every query also takes `location=<location ID>`, which is required when
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
-| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (6 on a complete hour). Starts when the collector did, unlike the backfilled daily history. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour at the fifteen-minute schedule; 6 for hours collected before it, at ten minutes). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
