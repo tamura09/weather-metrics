@@ -761,9 +761,10 @@ func dayOfMonth(date string) int {
 }
 
 // servedObservedHour is one clock hour of our own readings, rolled up. It is the
-// hourly counterpart of the daily rows, and exists for the same reason: at a
-// fifteen-minute cadence a month of raw readings is three thousand rows to draw one
-// line, where the hour it happened in is the resolution anyone actually reads.
+// hourly counterpart of the daily rows. The collector now runs hourly and the
+// older, denser readings were thinned to one an hour, so most hours hold a
+// single reading; the rollup still gives every hour the same shape, with the
+// hour's condition and rainfall worked out the same way as the daily rows.
 //
 // This is measured weather, not forecast -- the `hourly` resource is the
 // forward-looking one. It only covers hours the collector was running for, so
@@ -787,8 +788,8 @@ type servedObservedHour struct {
 	SnowMm      float64 `json:"snow_mm"`
 	Condition   string  `json:"condition"`
 	Description string  `json:"description"`
-	// Readings is 4 on a complete hour at the fifteen-minute schedule. Fewer means
-	// runs were missed, which is worth being able to see rather than guess at.
+	// Readings is 1 on a complete hour at the hourly schedule; 0-hour gaps simply
+	// have no row. It stays in the output so a missed run is visible.
 	Readings int `json:"readings"`
 }
 

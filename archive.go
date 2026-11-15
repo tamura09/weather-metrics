@@ -35,7 +35,7 @@ const (
 )
 
 // observation is one collect run's snapshot of the present. Fields are the
-// subset of the current timeline worth keeping at fifteen-minute resolution --
+// subset of the current timeline worth keeping at hourly resolution --
 // enough to recompute daily extremes and the derived indices without another
 // API call.
 type observation struct {

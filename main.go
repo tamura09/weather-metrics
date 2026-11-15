@@ -181,7 +181,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		log.Printf("resolve alerts: %v", err)
 	}
 	// The history is for the dashboard's record of past warnings; losing one
-	// run's entry costs a fifteen-minute gap at worst, not the reading.
+	// run's entry costs an hour's gap at worst, not the reading.
 	if err := a.archiveAlerts(ctx, alerts, now); err != nil {
 		log.Printf("archive alerts: %v", err)
 	}

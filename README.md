@@ -35,9 +35,12 @@ timeline is its own billed call. A scheduled run therefore makes exactly three:
 | `/timeline/1day?start=<2 days ago>` | 10 records | Reaches back far enough to re-read yesterday and forward eight days. |
 | `/timeline/1h?start=<now>` | 20 records | Just under a day ahead, which is the horizon the hourly panels show. |
 
-At a fifteen-minute schedule that is 288 calls a day per location, and 864 for
-the three this collects (盛岡市, 宮古市, 江東区) against the free 1,000. Ten
-minutes, the cadence it started with, would be 1,296 and spill into paid calls.
+At an hourly schedule that is 72 calls a day per location, and 216 for the three
+this collects (盛岡市, 宮古市, 江東区) against the free 1,000. Hourly is also what
+keeps a long dashboard range inside the Lambda response limit: a year of one
+location's readings is about 8,800 rows. Readings collected before the move to
+hourly (every ten, then fifteen minutes) were thinned to one per clock hour, the
+one nearest the top of the hour, so the archive has the same shape throughout.
 The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its call
 draws on a separate quota.
 
@@ -63,8 +66,8 @@ makes either readable, and the gap between them is itself worth watching.
 
 The same applies per date in the archive: `temp_max`/`temp_min` on a daily row
 are the API's, and become history once the date settles, while
-`observed_temp_max`/`observed_temp_min` are computed from the fifteen-minute
-readings this collector took (ten-minute before the move to several locations). A backfilled date has the former and not the
+`observed_temp_max`/`observed_temp_min` are computed from the hourly readings
+this collector took, so they can miss a peak that fell between two runs. A backfilled date has the former and not the
 latter — `observations` on the row says which.
 
 ## Locations
@@ -201,9 +204,9 @@ carried across runs because re-fetching it costs a billed call.
 
 ## Rainfall is not a sum
 
-`rain_1h` is a **rolling** one-hour total, so at a fifteen-minute cadence four
-consecutive readings all describe overlapping windows of the same rain. Adding
-them up (at the original ten-minute cadence) counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
+`rain_1h` is a **rolling** one-hour total, so whenever an hour holds more than
+one reading they describe overlapping windows of the same rain. Adding them up
+(at the original ten-minute cadence) counted 2026-08-09 at 4.21mm against the 1.95mm its settled daily record
 gives — more than double.
 
 Every observed rainfall figure therefore takes the largest reading within each
@@ -261,7 +264,7 @@ Every query also takes `location=<location ID>`, which is required when
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
-| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour at the fifteen-minute schedule; 6 for hours collected before it, at ten minutes). Starts when the collector did, unlike the backfilled daily history. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (1 on a complete hour at the hourly schedule). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |

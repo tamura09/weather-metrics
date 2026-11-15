@@ -29,13 +29,13 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	start := now.Add(-6 * time.Hour)
 
 	// Lifted early: the announced end is still ahead, but no run has seen it
-	// for an hour, so the span stops at the last sighting.
+	// for three hours, so the span stops at the last sighting.
 	lifted := presentAlertRecord(alertRecord{
 		alertDetail: alertDetail{Event: "強風注意報", Start: start.Unix(), End: now.Add(6 * time.Hour).Unix()},
 		FirstSeen:   start.Add(10 * time.Minute).Unix(),
-		LastSeen:    now.Add(-time.Hour).Unix(),
+		LastSeen:    now.Add(-3 * time.Hour).Unix(),
 	}, now)
-	if lifted.Ongoing || lifted.State != "解除" || lifted.ActiveFrom != start.UnixMilli() || lifted.ActiveTo != now.Add(-time.Hour).UnixMilli() {
+	if lifted.Ongoing || lifted.State != "解除" || lifted.ActiveFrom != start.UnixMilli() || lifted.ActiveTo != now.Add(-3*time.Hour).UnixMilli() {
 		t.Errorf("lifted: got %+v", lifted)
 	}
 
@@ -43,7 +43,7 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	ongoing := presentAlertRecord(alertRecord{
 		alertDetail: alertDetail{Event: "大雪警報", Start: start.Unix()},
 		FirstSeen:   start.Unix(),
-		LastSeen:    now.Add(-15 * time.Minute).Unix(),
+		LastSeen:    now.Add(-time.Hour).Unix(),
 	}, now)
 	if !ongoing.Ongoing || ongoing.State != "発表中" || ongoing.ActiveTo != now.UnixMilli() {
 		t.Errorf("ongoing: got %+v", ongoing)
@@ -55,7 +55,7 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	expired := presentAlertRecord(alertRecord{
 		alertDetail: alertDetail{Event: "雷注意報", Start: start.Unix(), End: end.Unix()},
 		FirstSeen:   start.Unix(),
-		LastSeen:    now.Add(-15 * time.Minute).Unix(),
+		LastSeen:    now.Add(-time.Hour).Unix(),
 	}, now)
 	if expired.Ongoing || expired.State != "解除" || expired.ActiveTo != end.UnixMilli() {
 		t.Errorf("expired: got %+v", expired)
@@ -64,7 +64,7 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	if later := presentAlertRecord(alertRecord{
 		alertDetail: alertDetail{Event: "雷注意報", Start: start.Unix(), End: end.Unix()},
 		FirstSeen:   start.Unix(),
-		LastSeen:    now.Add(-15 * time.Minute).Unix(),
+		LastSeen:    now.Add(-time.Hour).Unix(),
 	}, now.Add(24*time.Hour)); later.ActiveTo != end.UnixMilli() {
 		t.Errorf("expired, a day later: active_to %d, want %d", later.ActiveTo, end.UnixMilli())
 	}

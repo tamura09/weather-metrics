@@ -23,8 +23,8 @@ import (
 const alertsPrefix = "alerts/"
 
 // alertOngoingWithin is how recently an alert must have been seen to count as
-// still in force. Two fifteen-minute runs: one missed run should not end it.
-const alertOngoingWithin = 30 * time.Minute
+// still in force. Two hourly runs: one missed run should not end it.
+const alertOngoingWithin = 2 * time.Hour
 
 type alertRecord struct {
 	alertDetail
