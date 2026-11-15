@@ -27,8 +27,8 @@ import (
 // the archive never holds more than two weeks of dense readings.
 const denseRetention = 14 * 24 * time.Hour
 
-// thinBefore keeps every reading at or after cutoff and, of those before it,
-// the first reading in each clock hour -- the one nearest the top of the hour
+// thinBefore keeps every reading in an hour that has not wholly passed cutoff
+// and, for each clock hour that has, the first reading in it -- the one nearest the top of the hour
 // that still falls inside it. Choosing within the clock hour, rather than the
 // nearest top of an hour, is what observed_hourly and accumulateRain group by,
 // so each thinned hour holds exactly one reading there; and a clock hour never
@@ -56,15 +56,21 @@ func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) [
 	inHour := map[int64][]observation{}
 	var kept []observation
 	for _, reading := range readings {
-		if !reading.Time.Before(cutoff) {
-			kept = append(kept, reading)
-			continue
-		}
 		// The hour in the location's zone, as observed_hourly groups it;
 		// Truncate alone would cut on UTC hours, which differ for an offset
 		// that is not a whole number of hours.
 		local := reading.Time.In(zone)
-		hour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, zone).Unix()
+		start := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, zone)
+		// Only an hour that lies wholly before the cutoff is thinned. The
+		// cutoff moves fifteen minutes a run, so thinning the part of an hour
+		// it has passed would summarise the hour from a growing slice of it,
+		// each pass voting on the previous pass's summary instead of on the
+		// readings.
+		if start.Add(time.Hour).After(cutoff) {
+			kept = append(kept, reading)
+			continue
+		}
+		hour := start.Unix()
 		if current, ok := first[hour]; !ok || reading.Time.Before(current.Time) {
 			first[hour] = reading
 		}

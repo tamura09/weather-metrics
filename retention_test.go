@@ -160,3 +160,18 @@ func TestThinBeforeKeepsTheHoursConditionAndGust(t *testing.T) {
 		t.Errorf("got %+v, want Rain/小雨/10d, gust 7, rain 1.4", got)
 	}
 }
+
+// An hour the cutoff is part-way through is left whole until it has passed,
+// so the summary is made once, from all of the hour's readings.
+func TestThinBeforeLeavesAPartlyPassedHourAlone(t *testing.T) {
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	readings := readingsAt(base, base.Add(15*time.Minute), base.Add(30*time.Minute), base.Add(45*time.Minute))
+	for _, cutoff := range []time.Time{base.Add(15 * time.Minute), base.Add(45 * time.Minute), base.Add(59 * time.Minute)} {
+		if got := thinBefore(readings, cutoff, time.UTC); len(got) != 4 {
+			t.Errorf("cutoff %s: got %d readings, want the hour left whole", cutoff.Format("15:04"), len(got))
+		}
+	}
+	if got := thinBefore(readings, base.Add(time.Hour), time.UTC); len(got) != 1 {
+		t.Errorf("cutoff 11:00: got %d readings, want the hour thinned to 1", len(got))
+	}
+}
