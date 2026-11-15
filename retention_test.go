@@ -25,7 +25,7 @@ func TestThinBeforeKeepsTheFirstReadingOfEachClockHour(t *testing.T) {
 	)
 	cutoff := at(120)
 
-	got := thinBefore(readings, cutoff)
+	got := thinBefore(readings, cutoff, time.UTC)
 	want := []time.Time{at(-1), at(0), at(75), at(120), at(135)}
 	if len(got) != len(want) {
 		t.Fatalf("got %d readings %v, want %v", len(got), got, want)
@@ -37,7 +37,7 @@ func TestThinBeforeKeepsTheFirstReadingOfEachClockHour(t *testing.T) {
 	}
 
 	// Running it again, as every collect run does, changes nothing.
-	if again := thinBefore(got, cutoff); len(again) != len(got) {
+	if again := thinBefore(got, cutoff, time.UTC); len(again) != len(got) {
 		t.Errorf("not idempotent: %d readings became %d", len(got), len(again))
 	}
 }
@@ -53,7 +53,7 @@ func TestThinBeforeMatchesObservedHourlyBuckets(t *testing.T) {
 		}
 		times = append(times, base.Add(time.Duration(m)*time.Minute))
 	}
-	thinned := thinBefore(readingsAt(times...), base.Add(24*time.Hour))
+	thinned := thinBefore(readingsAt(times...), base.Add(24*time.Hour), time.UTC)
 
 	perHour := map[int64]int{}
 	for _, reading := range thinned {
@@ -72,7 +72,17 @@ func TestThinBeforeMatchesObservedHourlyBuckets(t *testing.T) {
 func TestThinBeforeWithNothingOldEnough(t *testing.T) {
 	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 	readings := readingsAt(now.Add(-45*time.Minute), now.Add(-30*time.Minute), now.Add(-15*time.Minute), now)
-	if got := thinBefore(readings, now.Add(-denseRetention)); len(got) != len(readings) {
+	if got := thinBefore(readings, now.Add(-denseRetention), time.UTC); len(got) != len(readings) {
 		t.Errorf("got %d readings, want all %d kept", len(got), len(readings))
+	}
+}
+
+// In a zone offset by a fraction of an hour, the hours are that zone's.
+func TestThinBeforeUsesTheLocationZone(t *testing.T) {
+	zone := time.FixedZone("plus0530", 5*3600+30*60)
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, zone) // 04:30 UTC
+	readings := readingsAt(base, base.Add(15*time.Minute), base.Add(30*time.Minute), base.Add(45*time.Minute))
+	if got := thinBefore(readings, base.Add(2*time.Hour), zone); len(got) != 1 || !got[0].Time.Equal(base) {
+		t.Errorf("got %v, want only the 10:00 local reading", got)
 	}
 }

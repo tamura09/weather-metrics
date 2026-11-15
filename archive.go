@@ -158,7 +158,7 @@ func (a *app) archiveObservation(ctx context.Context, reading observation, now t
 		return fmt.Errorf("load %s: %w", month, err)
 	}
 
-	merged := thinBefore(mergeObservations(existing.Readings, []observation{reading}), now.Add(-denseRetention))
+	merged := thinBefore(mergeObservations(existing.Readings, []observation{reading}), now.Add(-denseRetention), a.zone)
 	return a.saveJSON(ctx, observationsKey(a.prefix, month), monthObservations{Month: month, Readings: merged})
 }
 

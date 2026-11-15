@@ -35,7 +35,7 @@ const denseRetention = 14 * 24 * time.Hour
 // spans two months, so thinning month files one at a time cannot keep two
 // readings for the same hour. Thinning already-thinned readings changes
 // nothing, so it is safe to run on every collect.
-func thinBefore(readings []observation, cutoff time.Time) []observation {
+func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) []observation {
 	first := map[int64]observation{}
 	var kept []observation
 	for _, reading := range readings {
@@ -43,7 +43,11 @@ func thinBefore(readings []observation, cutoff time.Time) []observation {
 			kept = append(kept, reading)
 			continue
 		}
-		hour := reading.Time.Truncate(time.Hour).Unix()
+		// The hour in the location's zone, as observed_hourly groups it;
+		// Truncate alone would cut on UTC hours, which differ for an offset
+		// that is not a whole number of hours.
+		local := reading.Time.In(zone)
+		hour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, zone).Unix()
 		if current, ok := first[hour]; !ok || reading.Time.Before(current.Time) {
 			first[hour] = reading
 		}
@@ -87,7 +91,7 @@ func (a *app) compactMonth(ctx context.Context, month string, cutoff time.Time) 
 	if err != nil {
 		return 0, fmt.Errorf("load %s: %w", month, err)
 	}
-	thinned := thinBefore(stored.Readings, cutoff)
+	thinned := thinBefore(stored.Readings, cutoff, a.zone)
 	removed := len(stored.Readings) - len(thinned)
 	if removed == 0 {
 		return 0, nil
