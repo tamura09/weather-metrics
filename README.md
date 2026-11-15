@@ -209,7 +209,8 @@ readings are kept for good.
 Each run thins the month it writes, the month the two-week line is in, and the
 month before that. Anything older that is still dense -- the archive from
 before this rule, or a month an outage of more than a month left behind -- is
-thinned by the compact event, which makes no API calls:
+thinned by the compact event, which makes no API calls and leaves the current
+month to the scheduled runs (one may be writing it at the same moment):
 
 ```bash
 aws lambda invoke --region us-east-1 --function-name weather-metrics \

@@ -102,13 +102,18 @@ func (a *app) compactMonth(ctx context.Context, month string, cutoff time.Time) 
 	return removed, nil
 }
 
-// compactAll thins every month stored for the location. It is what the
-// {"location": ..., "compact": true} event runs: once when the retention rule
-// was introduced, and again after anything that left an old month dense, such
-// as an outage longer than a month. It makes no API calls.
+// compactAll thins every month stored for the location except the current
+// one. It is what the {"location": ..., "compact": true} event runs: once when
+// the retention rule was introduced, and again after anything that left an old
+// month dense, such as an outage longer than a month. It makes no API calls.
+//
+// The current month is left alone because a scheduled run can be writing it
+// at the same moment, and a read-modify-write here could put back a copy
+// without that run's reading. The scheduled runs thin it themselves.
 func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
 	cutoff := now.Add(-denseRetention)
 	prefix := a.prefix + observationsPrefix
+	current := now.In(a.zone).Format("2006-01")
 
 	months := []string{}
 	paginator := s3.NewListObjectsV2Paginator(a.objects, &s3.ListObjectsV2Input{Bucket: &a.bucket, Prefix: &prefix})
@@ -119,7 +124,7 @@ func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
 		}
 		for _, object := range page.Contents {
 			name := strings.TrimSuffix(strings.TrimPrefix(aws.ToString(object.Key), prefix), ".json")
-			if _, err := time.Parse("2006-01", name); err == nil {
+			if _, err := time.Parse("2006-01", name); err == nil && name != current {
 				months = append(months, name)
 			}
 		}
