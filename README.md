@@ -183,7 +183,8 @@ the API does not return a tendency.
 `alerts/` is the only record of past weather alerts: the snapshot holds just
 the ones in force, and OpenWeather has no way to ask for old ones. Each run
 that sees an alert updates its record by ID, under the year of its announced
-start. `first_seen`/`last_seen` are when this collector saw it; they matter
+start -- or, for an alert with no start, the year it was first seen, which a
+run after New Year finds by checking the previous year's file. `first_seen`/`last_seen` are when this collector saw it; they matter
 because a warning lifted early keeps its announced `end`, and only `last_seen`
 shows that it was gone. The text is fetched once per ID, so a revision the
 issuer makes under the same ID is not followed.
