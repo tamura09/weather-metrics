@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -61,24 +62,44 @@ func compressIfAccepted(headers map[string]string, response events.LambdaFunctio
 }
 
 // acceptsGzip reads Accept-Encoding, which a Function URL passes through with a
-// lowercased name, and honours an explicit q=0 refusal.
+// lowercased name. An explicit gzip entry decides on its own, so "gzip;q=0, *"
+// is a refusal; "*" counts only when gzip is not named (RFC 9110 12.5.3). A
+// q of 0 is a refusal either way.
 func acceptsGzip(headers map[string]string) bool {
+	gzipAccepted, wildcardAccepted, gzipNamed, wildcardNamed := false, false, false, false
 	for name, value := range headers {
 		if !strings.EqualFold(name, "accept-encoding") {
 			continue
 		}
 		for _, part := range strings.Split(value, ",") {
 			coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
-			coding = strings.ToLower(strings.TrimSpace(coding))
-			if coding != "gzip" && coding != "*" {
-				continue
+			accepted := qualityAbove0(params)
+			switch strings.ToLower(strings.TrimSpace(coding)) {
+			case "gzip", "x-gzip":
+				gzipNamed = true
+				gzipAccepted = gzipAccepted || accepted
+			case "*":
+				wildcardNamed = true
+				wildcardAccepted = wildcardAccepted || accepted
 			}
-			q := strings.ReplaceAll(strings.ToLower(params), " ", "")
-			if q == "q=0" || q == "q=0.0" || q == "q=0.00" || q == "q=0.000" {
-				continue
-			}
-			return true
 		}
 	}
-	return false
+	if gzipNamed {
+		return gzipAccepted
+	}
+	return wildcardNamed && wildcardAccepted
+}
+
+// qualityAbove0 reports whether a coding's parameters leave it acceptable: no
+// q at all means 1, and an unreadable q is treated as a refusal.
+func qualityAbove0(params string) bool {
+	for _, param := range strings.Split(params, ";") {
+		key, value, found := strings.Cut(strings.TrimSpace(param), "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(key), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		return err == nil && q > 0
+	}
+	return true
 }

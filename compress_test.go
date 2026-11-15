@@ -54,3 +54,30 @@ func TestCompressIfAccepted(t *testing.T) {
 		t.Error("a tiny body was compressed")
 	}
 }
+
+func TestAcceptsGzip(t *testing.T) {
+	for value, want := range map[string]bool{
+		"gzip":              true,
+		"gzip, deflate, br": true,
+		"GZIP;q=0.5":        true,
+		"x-gzip":            true,
+		"*":                 true,
+		"br, *;q=0.1":       true,
+		"gzip;q=0":          false,
+		"gzip; q=0.000":     false,
+		"gzip;q=0, *;q=1":   false, // an explicit refusal is not overridden by *
+		"*;q=1, gzip;q=0":   false,
+		"gzip;q=0.5, *;q=0": true, // nor an explicit acceptance by a refused *
+		"*;q=0":             false,
+		"br":                false,
+		"identity":          false,
+		"gzip;q=nonsense":   false,
+	} {
+		if got := acceptsGzip(map[string]string{"accept-encoding": value}); got != want {
+			t.Errorf("%q: got %v, want %v", value, got, want)
+		}
+	}
+	if acceptsGzip(nil) {
+		t.Error("no header: got true")
+	}
+}
