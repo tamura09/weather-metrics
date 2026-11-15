@@ -154,12 +154,13 @@ type timelineResponse struct {
 }
 
 type alertDetail struct {
-	ID          string `json:"id"`
-	SenderName  string `json:"sender_name"`
-	Event       string `json:"event"`
-	Start       int64  `json:"start"`
-	End         int64  `json:"end"`
-	Description string `json:"description"`
+	ID          string    `json:"id"`
+	SenderName  string    `json:"sender_name"`
+	Event       string    `json:"event"`
+	Start       int64     `json:"start"`
+	End         int64     `json:"end"`
+	Description alertText `json:"description"`
+	Tags        []string  `json:"tags,omitempty"`
 }
 
 type airPollution struct {
@@ -253,6 +254,9 @@ func (o *openWeather) alert(ctx context.Context, id string) (alertDetail, error)
 	}
 	if out.ID == "" {
 		out.ID = id
+	}
+	if out.Event == "" {
+		out.Event = alertEventName(out.ID, out.Tags)
 	}
 	return out, nil
 }
