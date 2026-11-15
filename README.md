@@ -204,10 +204,10 @@ carried across runs because re-fetching it costs a billed call.
 Observations are kept at the collector's fifteen-minute resolution for two
 weeks. After that they are thinned to one reading per clock hour -- the first
 one in the hour, so the same hours `observed_hourly` groups by -- and the hourly
-readings are kept for good. The kept reading carries the hour's largest
-`rain_1h`/`snow_1h` rather than its own, because a rolling one-hour total taken
-at the top of the hour describes the hour before; that keeps the observed
-rainfall for an hour or a day the same after thinning as before.
+readings are kept for good. The kept reading carries the `rain_1h`/`snow_1h`
+of its hour's wettest reading rather than its own, because a rolling one-hour
+total taken at the top of the hour describes the hour before; that keeps the
+observed precipitation for a day the same after thinning as before.
 
 Each run thins the month it writes, the month the two-week line is in, and the
 month before that. Anything older that is still dense -- the archive from

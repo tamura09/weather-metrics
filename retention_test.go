@@ -88,7 +88,7 @@ func TestThinBeforeUsesTheLocationZone(t *testing.T) {
 }
 
 // The hour's observed rainfall must come out the same after thinning: the kept
-// reading carries the hour's largest rain_1h, not its own.
+// reading carries the wettest reading's rain_1h and snow_1h, not its own.
 func TestThinBeforeKeepsTheHoursRainfall(t *testing.T) {
 	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
 	readings := []observation{
@@ -104,9 +104,25 @@ func TestThinBeforeKeepsTheHoursRainfall(t *testing.T) {
 		t.Fatalf("got %v, want only the 10:00 reading", thinned)
 	}
 	if thinned[0].Rain1h != 1.4 || thinned[0].Snow1h != 0.3 {
-		t.Errorf("kept reading has rain %v snow %v, want the hour's largest 1.4 / 0.3", thinned[0].Rain1h, thinned[0].Snow1h)
+		t.Errorf("kept reading has rain %v snow %v, want the wettest reading's 1.4 / 0.3", thinned[0].Rain1h, thinned[0].Snow1h)
 	}
 	if after := accumulateRain(thinned, time.UTC, func(r observation) float64 { return r.Rain1h }); after != before {
 		t.Errorf("rainfall %v after thinning, %v before", after, before)
+	}
+}
+
+// Rain and snow travel as a pair, so the daily rain+snow figure is not inflated
+// by combining one reading's rain with another's snow.
+func TestThinBeforeKeepsRainAndSnowTogether(t *testing.T) {
+	base := time.Date(2026, 12, 1, 10, 0, 0, 0, time.UTC)
+	readings := []observation{
+		{Time: base, Rain1h: 2.0, Snow1h: 0},
+		{Time: base.Add(30 * time.Minute), Rain1h: 0, Snow1h: 1.5},
+	}
+	total := func(r observation) float64 { return r.Rain1h + r.Snow1h }
+	before := accumulateRain(readings, time.UTC, total)
+	thinned := thinBefore(readings, base.Add(2*time.Hour), time.UTC)
+	if after := accumulateRain(thinned, time.UTC, total); after != before {
+		t.Errorf("rain+snow %v after thinning, %v before", after, before)
 	}
 }

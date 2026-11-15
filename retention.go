@@ -38,13 +38,15 @@ const denseRetention = 14 * 24 * time.Hour
 //
 // Rainfall needs care: rain_1h is a rolling total for the hour ending at the
 // reading, so the first reading of an hour mostly describes the hour before.
-// The kept reading therefore carries the largest rain_1h and snow_1h of its
-// hour, which is exactly what accumulateRain took from the full set -- the
-// hour's and the day's observed rainfall come out the same after thinning.
+// The kept reading therefore carries the rain_1h and snow_1h of its hour's
+// wettest reading (largest rain plus snow), as a pair: the daily observed
+// precipitation takes each hour's largest rain+snow, and carrying the two
+// maxima separately would add a rainy reading's rain to a snowy one's snow.
+// The day's figure, and the hour's rain or snow alone in any hour that had
+// only one of them, come out the same after thinning as before.
 func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) []observation {
 	first := map[int64]observation{}
-	rain := map[int64]float64{}
-	snow := map[int64]float64{}
+	wettest := map[int64]observation{}
 	var kept []observation
 	for _, reading := range readings {
 		if !reading.Time.Before(cutoff) {
@@ -59,14 +61,15 @@ func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) [
 		if current, ok := first[hour]; !ok || reading.Time.Before(current.Time) {
 			first[hour] = reading
 		}
-		rain[hour] = max(rain[hour], reading.Rain1h)
-		snow[hour] = max(snow[hour], reading.Snow1h)
+		if current, ok := wettest[hour]; !ok || reading.Rain1h+reading.Snow1h > current.Rain1h+current.Snow1h {
+			wettest[hour] = reading
+		}
 	}
 
 	thinned := make([]observation, 0, len(first)+len(kept))
 	for hour, reading := range first {
-		reading.Rain1h = rain[hour]
-		reading.Snow1h = snow[hour]
+		reading.Rain1h = wettest[hour].Rain1h
+		reading.Snow1h = wettest[hour].Snow1h
 		thinned = append(thinned, reading)
 	}
 	thinned = append(thinned, kept...)
