@@ -42,7 +42,16 @@ The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its 
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
-stored snapshot, which on a day with no weather warnings is none of them.
+stored snapshot, which on a day with no weather warnings is none of them. If
+an alert cannot be decoded it is never stored, so it is fetched again on every
+run; a `decode alert` line in the logs means calls are being spent that way.
+
+For JMA warnings `/alert/{id}` returns an empty `event`, the description as a
+list of translations (also empty), and English `tags` such as `Wind`. The kind
+of warning is only in the ID, `VPWW54_<office>_...:<code>:<area>:...`, where
+`<code>` is the VPWW54 warning code (`15` 強風注意報, `20` 濃霧注意報, ...), so
+the event name is taken from that (`alert_detail.go`). An unknown code falls
+back to `気象情報 (<tags>)`.
 
 ### `temp_min` / `temp_max` on the 2.5 current-weather endpoint are not this
 

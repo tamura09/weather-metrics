@@ -187,7 +187,7 @@ func presentAlertRecord(record alertRecord, now time.Time) servedAlertRecord {
 	return servedAlertRecord{
 		Event:       record.Event,
 		SenderName:  record.SenderName,
-		Description: record.Description,
+		Description: string(record.Description),
 		ActiveFrom:  from * 1000,
 		ActiveTo:    to.UnixMilli(),
 		StartTime:   record.Start * 1000,
