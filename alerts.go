@@ -291,3 +291,17 @@ func alertLevel(event string) string {
 		return "発表中"
 	}
 }
+
+// noAlertsEvent labels the one row the timeline gets when nothing was in force.
+const noAlertsEvent = "期間内の発表なし"
+
+// alertTimelineOrPlaceholder stands in a single empty row for an empty
+// timeline. With no rows at all, Grafana's state-timeline has no time field to
+// find after partitioning and shows "Data does not have a time field", which
+// reads as a fault rather than as a quiet stretch of weather.
+func alertTimelineOrPlaceholder(rows []alertTransition, from time.Time) []alertTransition {
+	if len(rows) > 0 {
+		return rows
+	}
+	return []alertTransition{{Time: from.UnixMilli(), Event: noAlertsEvent, State: ""}}
+}

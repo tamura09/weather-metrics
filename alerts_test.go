@@ -108,3 +108,15 @@ func TestAlertLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertTimelinePlaceholderWhenEmpty(t *testing.T) {
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	rows := alertTimelineOrPlaceholder(alertTimeline(nil), from)
+	if len(rows) != 1 || rows[0].Event != noAlertsEvent || rows[0].State != "" || rows[0].Time != from.UnixMilli() {
+		t.Errorf("got %+v", rows)
+	}
+	busy := []alertTransition{{Time: 1, Event: "雷注意報", State: "注意報"}}
+	if got := alertTimelineOrPlaceholder(busy, from); len(got) != 1 || got[0].Event != "雷注意報" {
+		t.Errorf("non-empty timeline changed: %+v", got)
+	}
+}
