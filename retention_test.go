@@ -86,3 +86,27 @@ func TestThinBeforeUsesTheLocationZone(t *testing.T) {
 		t.Errorf("got %v, want only the 10:00 local reading", got)
 	}
 }
+
+// The hour's observed rainfall must come out the same after thinning: the kept
+// reading carries the hour's largest rain_1h, not its own.
+func TestThinBeforeKeepsTheHoursRainfall(t *testing.T) {
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	readings := []observation{
+		{Time: base, Rain1h: 0.2, Snow1h: 0},
+		{Time: base.Add(15 * time.Minute), Rain1h: 0.9},
+		{Time: base.Add(30 * time.Minute), Rain1h: 1.4, Snow1h: 0.3},
+		{Time: base.Add(45 * time.Minute), Rain1h: 1.1},
+	}
+	before := accumulateRain(readings, time.UTC, func(r observation) float64 { return r.Rain1h })
+
+	thinned := thinBefore(readings, base.Add(2*time.Hour), time.UTC)
+	if len(thinned) != 1 || !thinned[0].Time.Equal(base) {
+		t.Fatalf("got %v, want only the 10:00 reading", thinned)
+	}
+	if thinned[0].Rain1h != 1.4 || thinned[0].Snow1h != 0.3 {
+		t.Errorf("kept reading has rain %v snow %v, want the hour's largest 1.4 / 0.3", thinned[0].Rain1h, thinned[0].Snow1h)
+	}
+	if after := accumulateRain(thinned, time.UTC, func(r observation) float64 { return r.Rain1h }); after != before {
+		t.Errorf("rainfall %v after thinning, %v before", after, before)
+	}
+}

@@ -204,7 +204,10 @@ carried across runs because re-fetching it costs a billed call.
 Observations are kept at the collector's fifteen-minute resolution for two
 weeks. After that they are thinned to one reading per clock hour -- the first
 one in the hour, so the same hours `observed_hourly` groups by -- and the hourly
-readings are kept for good.
+readings are kept for good. The kept reading carries the hour's largest
+`rain_1h`/`snow_1h` rather than its own, because a rolling one-hour total taken
+at the top of the hour describes the hour before; that keeps the observed
+rainfall for an hour or a day the same after thinning as before.
 
 Each run thins the month it writes, the month the two-week line is in, and the
 month before that. Anything older that is still dense -- the archive from
@@ -224,9 +227,9 @@ returns every reading in the window in one Lambda response, capped at 6MB
 it at about three months. With two dense weeks and hourly beyond, a year is
 about 10,000 rows, 4.4MB as JSON and about 400KB gzipped (see Serve mode).
 
-What it costs: `observed_temp_max`/`observed_temp_min` and the observed
-rainfall for a date older than two weeks are worked out from the hourly
-readings, so a peak between two hours is lost. For a settled date the API's own
+What it costs: `observed_temp_max`/`observed_temp_min` for a date older than
+two weeks are worked out from the hourly readings, so a peak between two hours
+is lost. For a settled date the API's own
 `temp_max`/`temp_min`/`rain` on the daily row are the better figures anyway.
 
 ## Rainfall is not a sum

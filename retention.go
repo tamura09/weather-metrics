@@ -35,8 +35,16 @@ const denseRetention = 14 * 24 * time.Hour
 // spans two months, so thinning month files one at a time cannot keep two
 // readings for the same hour. Thinning already-thinned readings changes
 // nothing, so it is safe to run on every collect.
+//
+// Rainfall needs care: rain_1h is a rolling total for the hour ending at the
+// reading, so the first reading of an hour mostly describes the hour before.
+// The kept reading therefore carries the largest rain_1h and snow_1h of its
+// hour, which is exactly what accumulateRain took from the full set -- the
+// hour's and the day's observed rainfall come out the same after thinning.
 func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) []observation {
 	first := map[int64]observation{}
+	rain := map[int64]float64{}
+	snow := map[int64]float64{}
 	var kept []observation
 	for _, reading := range readings {
 		if !reading.Time.Before(cutoff) {
@@ -51,10 +59,14 @@ func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) [
 		if current, ok := first[hour]; !ok || reading.Time.Before(current.Time) {
 			first[hour] = reading
 		}
+		rain[hour] = max(rain[hour], reading.Rain1h)
+		snow[hour] = max(snow[hour], reading.Snow1h)
 	}
 
 	thinned := make([]observation, 0, len(first)+len(kept))
-	for _, reading := range first {
+	for hour, reading := range first {
+		reading.Rain1h = rain[hour]
+		reading.Snow1h = snow[hour]
 		thinned = append(thinned, reading)
 	}
 	thinned = append(thinned, kept...)
