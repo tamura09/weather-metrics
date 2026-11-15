@@ -10,14 +10,14 @@ func TestMergeAlertHistoryKeepsFirstSeen(t *testing.T) {
 	later := first.Add(45 * time.Minute)
 
 	stored := mergeAlertHistory(nil, []alertDetail{{ID: "a", Event: "大雨注意報"}}, first)
-	stored = mergeAlertHistory(stored, []alertDetail{{ID: "a", Event: "大雨警報"}, {ID: "b", Event: "雷注意報"}}, later)
+	stored = mergeAlertHistory(stored, []alertDetail{{ID: "a", Event: "大雨注意報"}, {ID: "b", Event: "雷注意報"}}, later)
 
 	if len(stored) != 2 {
 		t.Fatalf("got %d records, want 2", len(stored))
 	}
 	a := stored[0]
-	if a.ID != "a" || a.FirstSeen != first.Unix() || a.LastSeen != later.Unix() || a.Event != "大雨警報" {
-		t.Errorf("a: got %+v; want first_seen kept, last_seen and text updated", a)
+	if a.ID != "a" || a.FirstSeen != first.Unix() || a.LastSeen != later.Unix() {
+		t.Errorf("a: got %+v; want first_seen kept and last_seen moved on", a)
 	}
 	if b := stored[1]; b.FirstSeen != later.Unix() || b.LastSeen != later.Unix() {
 		t.Errorf("b: got %+v", b)
@@ -47,6 +47,18 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	}, now)
 	if !ongoing.Ongoing || ongoing.State != "発表中" || ongoing.ActiveTo != now.UnixMilli() {
 		t.Errorf("ongoing: got %+v", ongoing)
+	}
+
+	// Seen on the last run but past its announced end since: over, and the
+	// span stops at the end rather than running on to now.
+	end := now.Add(-5 * time.Minute)
+	expired := presentAlertRecord(alertRecord{
+		alertDetail: alertDetail{Event: "雷注意報", Start: start.Unix(), End: end.Unix()},
+		FirstSeen:   start.Unix(),
+		LastSeen:    now.Add(-15 * time.Minute).Unix(),
+	}, now)
+	if expired.Ongoing || expired.State != "解除" || expired.ActiveTo != end.UnixMilli() {
+		t.Errorf("expired: got %+v", expired)
 	}
 }
 

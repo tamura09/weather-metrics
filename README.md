@@ -184,7 +184,8 @@ the ones in force, and OpenWeather has no way to ask for old ones. Each run
 that sees an alert updates its record by ID, under the year of its announced
 start. `first_seen`/`last_seen` are when this collector saw it; they matter
 because a warning lifted early keeps its announced `end`, and only `last_seen`
-shows that it was gone.
+shows that it was gone. The text is fetched once per ID, so a revision the
+issuer makes under the same ID is not followed.
 
 Observations are keyed on the minute they were taken, so a retry inside the same
 minute corrects the stored copy instead of adding a near-duplicate point.

@@ -95,8 +95,10 @@ func (a *app) loadAlertYear(ctx context.Context, year string) (yearAlerts, error
 }
 
 // mergeAlertHistory updates the stored records with the alerts seen now. An
-// alert seen again keeps its first_seen and takes the latest text, since the
-// issuer can revise an alert under the same ID.
+// alert seen again keeps its first_seen and moves its last_seen on. Its text is
+// whatever resolveAlerts handed over, which for a known ID is the copy cached in
+// the snapshot: re-fetching would be a billed call per alert per run, so a
+// revision the issuer makes under the same ID is not followed.
 func mergeAlertHistory(stored []alertRecord, seen []alertDetail, now time.Time) []alertRecord {
 	byID := make(map[string]alertRecord, len(stored)+len(seen))
 	for _, record := range stored {
@@ -128,7 +130,8 @@ func mergeAlertHistory(stored []alertRecord, seen []alertDetail, now time.Time) 
 // servedAlertRecord is one alert as it was observed, in epoch milliseconds.
 // active_from/active_to is the span the dashboard draws: from the announced
 // start (or when first seen, if the API gave none or gave a later one) to the
-// last run that still saw it, or to now while it is still in force.
+// last run that still saw it, or to now while it is still in force -- but never
+// past its announced end, which the collector also stops carrying it at.
 type servedAlertRecord struct {
 	Event       string `json:"event"`
 	SenderName  string `json:"sender_name"`
@@ -146,11 +149,21 @@ func presentAlertRecord(record alertRecord, now time.Time) servedAlertRecord {
 	if record.Start > 0 && record.Start < from {
 		from = record.Start
 	}
-	ongoing := now.Sub(time.Unix(record.LastSeen, 0)) <= alertOngoingWithin
+	// Seen recently enough that it may still be in force; a missed run should
+	// not cut it short.
+	recent := now.Sub(time.Unix(record.LastSeen, 0)) <= alertOngoingWithin
+	expired := record.End > 0 && !time.Unix(record.End, 0).After(now)
+
 	to := time.Unix(record.LastSeen, 0)
+	if recent {
+		to = now
+		if expired {
+			to = time.Unix(record.End, 0)
+		}
+	}
+	ongoing := recent && !expired
 	state := "解除"
 	if ongoing {
-		to = now
 		state = "発表中"
 	}
 	return servedAlertRecord{
