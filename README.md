@@ -176,7 +176,15 @@ the API does not return a tendency.
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
 <prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
+<prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
+
+`alerts/` is the only record of past weather alerts: the snapshot holds just
+the ones in force, and OpenWeather has no way to ask for old ones. Each run
+that sees an alert updates its record by ID, under the year of its announced
+start. `first_seen`/`last_seen` are when this collector saw it; they matter
+because a warning lifted early keeps its announced `end`, and only `last_seen`
+shows that it was gone.
 
 Observations are keyed on the minute they were taken, so a retry inside the same
 minute corrects the stored copy instead of adding a near-duplicate point.
@@ -255,6 +263,8 @@ Every query also takes `location=<location ID>`, which is required when
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
 | `?resource=alerts` | Active alerts, with epoch-millisecond start and end for a time axis. |
+| `?resource=alert_history&from=<ms>&to=<ms>` | Every recorded alert whose span overlaps the window, newest first. `active_from`/`active_to` run from the announced start to the last run that saw it, or to now while `ongoing`. |
+| `?resource=alert_timeline&from=<ms>&to=<ms>` | The same spans as `{time, event, state}` transitions, merged per event, for a state-timeline partitioned by `event`. `state` is `発表中`, or empty from the moment it was lifted. |
 
 A lag that keeps growing is the same signal a stalled collector would otherwise
 need a separate success/failure metric for: nothing new lands in the archive,
