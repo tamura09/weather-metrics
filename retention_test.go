@@ -126,3 +126,17 @@ func TestThinBeforeKeepsRainAndSnowTogether(t *testing.T) {
 		t.Errorf("rain+snow %v after thinning, %v before", after, before)
 	}
 }
+
+func TestMonthsInUse(t *testing.T) {
+	jst := time.FixedZone("JST", 9*3600)
+	instance := &app{zone: jst}
+
+	early := instance.monthsInUse(time.Date(2026, 12, 1, 1, 0, 0, 0, jst))
+	if !early["2026-12"] || !early["2026-11"] {
+		t.Errorf("early in a month: got %v, want both months", early)
+	}
+	later := instance.monthsInUse(time.Date(2026, 12, 15, 12, 0, 0, 0, jst))
+	if !later["2026-12"] || later["2026-11"] {
+		t.Errorf("mid-month: got %v, want only the current month", later)
+	}
+}

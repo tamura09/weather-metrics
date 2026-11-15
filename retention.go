@@ -85,11 +85,11 @@ func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) [
 func (a *app) compactEarlierMonths(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-denseRetention)
 	cutoffMonth := time.Date(cutoff.In(a.zone).Year(), cutoff.In(a.zone).Month(), 1, 0, 0, 0, 0, a.zone)
-	current := now.In(a.zone).Format("2006-01")
+	inUse := a.monthsInUse(now)
 
 	for _, start := range []time.Time{cutoffMonth.AddDate(0, -1, 0), cutoffMonth} {
 		month := start.Format("2006-01")
-		if month == current {
+		if inUse[month] {
 			continue
 		}
 		if _, err := a.compactMonth(ctx, month, cutoff); err != nil {
@@ -122,13 +122,13 @@ func (a *app) compactMonth(ctx context.Context, month string, cutoff time.Time) 
 // the retention rule was introduced, and again after anything that left an old
 // month dense, such as an outage longer than a month. It makes no API calls.
 //
-// The current month is left alone because a scheduled run can be writing it
-// at the same moment, and a read-modify-write here could put back a copy
-// without that run's reading. The scheduled runs thin it themselves.
+// The months a scheduled run may be writing are left alone (monthsInUse), so
+// a read-modify-write here cannot put back a copy without that run's reading.
+// The scheduled runs thin them themselves.
 func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
 	cutoff := now.Add(-denseRetention)
 	prefix := a.prefix + observationsPrefix
-	current := now.In(a.zone).Format("2006-01")
+	inUse := a.monthsInUse(now)
 
 	months := []string{}
 	paginator := s3.NewListObjectsV2Paginator(a.objects, &s3.ListObjectsV2Input{Bucket: &a.bucket, Prefix: &prefix})
@@ -139,7 +139,7 @@ func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
 		}
 		for _, object := range page.Contents {
 			name := strings.TrimSuffix(strings.TrimPrefix(aws.ToString(object.Key), prefix), ".json")
-			if _, err := time.Parse("2006-01", name); err == nil && name != current {
+			if _, err := time.Parse("2006-01", name); err == nil && !inUse[name] {
 				months = append(months, name)
 			}
 		}
@@ -155,4 +155,16 @@ func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
 		removed[month] = count
 	}
 	return map[string]any{"location": a.location, "months": months, "readings_removed": removed}, nil
+}
+
+// monthsInUse is the month files a collect run may be writing around now: the
+// current month, and the previous one for the first hours of a month, because
+// a reading is filed by the time the API stamped it, which can still be the
+// last minutes of the old month, and a slow or retried run can land late.
+// Thinning leaves these to the run that writes them.
+func (a *app) monthsInUse(now time.Time) map[string]bool {
+	return map[string]bool{
+		now.In(a.zone).Format("2006-01"):                     true,
+		now.Add(-3 * time.Hour).In(a.zone).Format("2006-01"): true,
+	}
 }

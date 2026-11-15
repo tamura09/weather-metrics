@@ -212,8 +212,9 @@ observed precipitation for a day the same after thinning as before.
 Each run thins the month it writes, the month the two-week line is in, and the
 month before that. Anything older that is still dense -- the archive from
 before this rule, or a month an outage of more than a month left behind -- is
-thinned by the compact event, which makes no API calls and leaves the current
-month to the scheduled runs (one may be writing it at the same moment):
+thinned by the compact event, which makes no API calls and leaves the month a
+scheduled run may be writing (the current one, and the previous one for the
+first hours of a month) to those runs:
 
 ```bash
 aws lambda invoke --region us-east-1 --function-name weather-metrics \
