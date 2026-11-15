@@ -59,11 +59,11 @@ func TestAlertTimelineMergesOverlappingSpansPerEvent(t *testing.T) {
 	})
 
 	want := []alertTransition{
-		{100, "大雨注意報", "発表中"},
-		{150, "雷注意報", "発表中"},
+		{100, "大雨注意報", "注意報"},
+		{150, "雷注意報", "注意報"},
 		{250, "雷注意報", ""},
 		{400, "大雨注意報", ""},
-		{600, "大雨注意報", "発表中"},
+		{600, "大雨注意報", "注意報"},
 		{700, "大雨注意報", ""},
 	}
 	if len(rows) != len(want) {
@@ -72,6 +72,19 @@ func TestAlertTimelineMergesOverlappingSpansPerEvent(t *testing.T) {
 	for i := range want {
 		if rows[i] != want[i] {
 			t.Errorf("row %d: got %+v, want %+v", i, rows[i], want[i])
+		}
+	}
+}
+
+func TestAlertLevel(t *testing.T) {
+	for event, want := range map[string]string{
+		"大雨特別警報": "特別警報",
+		"暴風警報":   "警報",
+		"乾燥注意報":  "注意報",
+		"Flood":  "発表中",
+	} {
+		if got := alertLevel(event); got != want {
+			t.Errorf("%s: got %s, want %s", event, got, want)
 		}
 	}
 }

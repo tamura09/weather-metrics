@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -188,8 +189,9 @@ func (a *app) servedAlertHistory(ctx context.Context, from, to, now time.Time) (
 }
 
 // alertTransition is one point of the state-timeline: from Time onward, the
-// alert named Event is State ("発表中", or "" once it has been lifted). The
-// dashboard partitions the rows by event, giving one band per kind of alert.
+// alert named Event is in force at level State, or "" once it has been lifted.
+// The dashboard partitions the rows by event, giving one band per kind of
+// alert, coloured by level.
 type alertTransition struct {
 	Time  int64  `json:"time"`
 	Event string `json:"event"`
@@ -230,11 +232,28 @@ func alertTimeline(alerts []servedAlertRecord) []alertTransition {
 		}
 		for _, s := range merged {
 			rows = append(rows,
-				alertTransition{Time: s.from, Event: event, State: "発表中"},
+				alertTransition{Time: s.from, Event: event, State: alertLevel(event)},
 				alertTransition{Time: s.to, Event: event, State: ""},
 			)
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Time < rows[j].Time })
 	return rows
+}
+
+// alertLevel is the JMA tier an alert's name places it in, so the timeline can
+// colour 特別警報, 警報 and 注意報 apart. 特別警報 is checked first because its
+// name also contains 警報. Anything else -- an issuer that does not follow the
+// JMA naming -- is just 発表中.
+func alertLevel(event string) string {
+	switch {
+	case strings.Contains(event, "特別警報"):
+		return "特別警報"
+	case strings.Contains(event, "警報"):
+		return "警報"
+	case strings.Contains(event, "注意報"):
+		return "注意報"
+	default:
+		return "発表中"
+	}
 }
