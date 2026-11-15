@@ -100,6 +100,21 @@ func (a *app) serveResource(ctx context.Context, request events.LambdaFunctionUR
 		}
 		return jsonResponse(http.StatusOK, servedAlerts(snapshot.Alerts))
 
+	case "alert_history", "alert_timeline":
+		from, to, err := timeRange(request.QueryStringParameters, now)
+		if err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		alerts, err := a.servedAlertHistory(ctx, from, to, now)
+		if err != nil {
+			log.Printf("read alert history: %v", err)
+			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "cannot read alert history"})
+		}
+		if resource == "alert_timeline" {
+			return jsonResponse(http.StatusOK, alertTimeline(alerts))
+		}
+		return jsonResponse(http.StatusOK, alerts)
+
 	case "daily":
 		from, to, err := timeRange(request.QueryStringParameters, now)
 		if err != nil {
