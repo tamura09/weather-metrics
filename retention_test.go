@@ -140,3 +140,23 @@ func TestMonthsInUse(t *testing.T) {
 		t.Errorf("mid-month: got %v, want only the current month", later)
 	}
 }
+
+// A thinned hour keeps the hour's dominant condition and strongest gust, not
+// just whatever the first reading had.
+func TestThinBeforeKeepsTheHoursConditionAndGust(t *testing.T) {
+	base := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	readings := []observation{
+		{Time: base, Condition: "Clear", Description: "晴天", Icon: "01d", WindGust: 2},
+		{Time: base.Add(15 * time.Minute), Condition: "Rain", Description: "小雨", Icon: "10d", Rain1h: 0.4, WindGust: 7},
+		{Time: base.Add(30 * time.Minute), Condition: "Rain", Description: "小雨", Icon: "10d", Rain1h: 1.4, WindGust: 4},
+		{Time: base.Add(45 * time.Minute), Condition: "Rain", Description: "小雨", Icon: "10d", Rain1h: 1.1, WindGust: 3},
+	}
+	thinned := thinBefore(readings, base.Add(2*time.Hour), time.UTC)
+	if len(thinned) != 1 {
+		t.Fatalf("got %d readings", len(thinned))
+	}
+	got := thinned[0]
+	if got.Condition != "Rain" || got.Description != "小雨" || got.Icon != "10d" || got.WindGust != 7 || got.Rain1h != 1.4 {
+		t.Errorf("got %+v, want Rain/小雨/10d, gust 7, rain 1.4", got)
+	}
+}

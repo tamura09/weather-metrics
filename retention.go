@@ -44,9 +44,16 @@ const denseRetention = 14 * 24 * time.Hour
 // maxima separately would add a rainy reading's rain to a snowy one's snow.
 // The day's figure, and the hour's rain or snow alone in any hour that had
 // only one of them, come out the same after thinning as before.
+//
+// For the same reason the kept reading takes the hour's dominant condition (as
+// observed_hourly picks it) and its strongest gust, so a thinned hour is not
+// "Clear" with rain in it, and a gust is not lost to the reading that happened
+// to be first. Everything else -- temperature, humidity, pressure, wind speed
+// -- is the snapshot at the top of the hour.
 func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) []observation {
 	first := map[int64]observation{}
 	wettest := map[int64]observation{}
+	inHour := map[int64][]observation{}
 	var kept []observation
 	for _, reading := range readings {
 		if !reading.Time.Before(cutoff) {
@@ -64,12 +71,26 @@ func thinBefore(readings []observation, cutoff time.Time, zone *time.Location) [
 		if current, ok := wettest[hour]; !ok || reading.Rain1h+reading.Snow1h > current.Rain1h+current.Snow1h {
 			wettest[hour] = reading
 		}
+		inHour[hour] = append(inHour[hour], reading)
 	}
 
 	thinned := make([]observation, 0, len(first)+len(kept))
 	for hour, reading := range first {
 		reading.Rain1h = wettest[hour].Rain1h
 		reading.Snow1h = wettest[hour].Snow1h
+		if condition, description := dominantCondition(inHour[hour]); condition != "" && condition != reading.Condition {
+			reading.Condition, reading.Description = condition, description
+			// The icon belongs to whichever reading had that condition.
+			for _, other := range inHour[hour] {
+				if other.Condition == condition {
+					reading.Icon = other.Icon
+					break
+				}
+			}
+		}
+		for _, other := range inHour[hour] {
+			reading.WindGust = max(reading.WindGust, other.WindGust)
+		}
 		thinned = append(thinned, reading)
 	}
 	thinned = append(thinned, kept...)

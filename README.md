@@ -63,9 +63,10 @@ makes either readable, and the gap between them is itself worth watching.
 
 The same applies per date in the archive: `temp_max`/`temp_min` on a daily row
 are the API's, and become history once the date settles, while
-`observed_temp_max`/`observed_temp_min` are computed from the fifteen-minute
-readings this collector took (ten-minute before the move to several locations). A backfilled date has the former and not the
-latter — `observations` on the row says which.
+`observed_temp_max`/`observed_temp_min` are computed from the readings this
+collector took: fifteen-minute for the last two weeks, hourly before that (see
+Retention). A backfilled date has the former and not the latter --
+`observations` on the row says which.
 
 ## Locations
 
@@ -228,9 +229,13 @@ returns every reading in the window in one Lambda response, capped at 6MB
 it at about three months. With two dense weeks and hourly beyond, a year is
 about 10,000 rows, 4.4MB as JSON and about 400KB gzipped (see Serve mode).
 
-What it costs: `observed_temp_max`/`observed_temp_min` for a date older than
-two weeks are worked out from the hourly readings, so a peak between two hours
-is lost. For a settled date the API's own
+What it costs, for anything older than two weeks: the kept reading is the
+snapshot at the top of the hour, so the temperature, humidity, pressure and
+wind speed between two hours are gone. That shows in `observed_temp_max`/
+`observed_temp_min` on a daily row (a peak between hours is missed) and in
+`observed_hourly`, whose `temp_max`/`temp_min` for an hour become the one
+value. What is kept from the whole hour: the precipitation (as above), the
+dominant `condition`, and the strongest `wind_gust`. For a settled date the API's own
 `temp_max`/`temp_min`/`rain` on the daily row are the better figures anyway.
 
 ## Rainfall is not a sum
