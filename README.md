@@ -202,16 +202,26 @@ carried across runs because re-fetching it costs a billed call.
 ## Retention: two weeks dense, hourly for good
 
 Observations are kept at the collector's fifteen-minute resolution for two
-weeks. After that each run thins them to one reading per clock hour -- the one
-nearest the top of the hour -- and the hourly readings are kept for good. The
-readings from before this existed (ten-, then fifteen-minute) were thinned the
-same way once.
+weeks. After that they are thinned to one reading per clock hour -- the first
+one in the hour, so the same hours `observed_hourly` groups by -- and the hourly
+readings are kept for good.
+
+Each run thins the month it writes, the month the two-week line is in, and the
+month before that. Anything older that is still dense -- the archive from
+before this rule, or a month an outage of more than a month left behind -- is
+thinned by the compact event, which makes no API calls:
+
+```bash
+aws lambda invoke --region us-east-1 --function-name weather-metrics \
+  --payload '{"location":"morioka","compact":true}' --cli-binary-format raw-in-base64-out \
+  /dev/stdout
+```
 
 This is about the serve function, not storage. The raw observation endpoint
 returns every reading in the window in one Lambda response, capped at 6MB
-(about 440 bytes a reading): at fifteen minutes one location went over it at
-about three months. With two dense weeks and hourly beyond, a year is about
-10,000 rows (4.4MB), so a window much past a year will still hit the cap.
+(about 440 bytes a reading as JSON): at fifteen minutes one location went over
+it at about three months. With two dense weeks and hourly beyond, a year is
+about 10,000 rows, 4.4MB as JSON and about 400KB gzipped (see Serve mode).
 
 What it costs: `observed_temp_max`/`observed_temp_min` and the observed
 rainfall for a date older than two weeks are worked out from the hourly
@@ -291,6 +301,12 @@ Every query also takes `location=<location ID>`, which is required when
 A lag that keeps growing is the same signal a stalled collector would otherwise
 need a separate success/failure metric for: nothing new lands in the archive,
 whatever the reason.
+
+Responses are gzipped when the request's `Accept-Encoding` allows it, which
+Grafana's Infinity datasource does by default. That is what keeps a long
+window well inside the 6MB Lambda response cap (JSON of this shape compresses
+about 14x); a client that does not ask still gets plain JSON. Responses over
+1MB before compression are logged with their size, to see how close the cap is.
 
 Every request must carry the shared secret in an `x-weather-token` header; the
 Function URL has no AWS auth of its own because Infinity cannot sign SigV4.

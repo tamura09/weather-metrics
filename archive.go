@@ -146,11 +146,11 @@ func dailyKey(prefix, year string) string {
 	return fmt.Sprintf("%s%s%s.json", prefix, dailyPrefix, year)
 }
 
-// archiveObservation folds one reading into its month. Readings are keyed on
-// the minute they were taken, so a retry inside the same minute corrects the
-// stored copy rather than adding a near-duplicate point to every graph.
-// archiveObservation merges the reading into its month and, in the same write,
+// archiveObservation folds one reading into its month and, in the same write,
 // thins whatever in that month has crossed the two-week line (retention.go).
+// Readings are keyed on the minute they were taken, so a retry inside the same
+// minute corrects the stored copy rather than adding a near-duplicate point to
+// every graph.
 func (a *app) archiveObservation(ctx context.Context, reading observation, now time.Time) error {
 	month := reading.Time.In(a.zone).Format("2006-01")
 	existing, err := a.loadMonth(ctx, month)

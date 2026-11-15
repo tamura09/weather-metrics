@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // Observations are kept at the collector's full fifteen-minute resolution for
@@ -23,73 +27,108 @@ import (
 // the archive never holds more than two weeks of dense readings.
 const denseRetention = 14 * 24 * time.Hour
 
-// nearestHour is the top of the hour a reading is closest to. Grouping by it
-// rather than by the hour a reading falls in keeps the reading taken just
-// before the hour, which is the one that describes it.
-func nearestHour(t time.Time) time.Time {
-	return t.Add(30 * time.Minute).Truncate(time.Hour)
-}
-
 // thinBefore keeps every reading at or after cutoff and, of those before it,
-// the one nearest the top of each hour. readings must be sorted by time, as
-// mergeObservations leaves them; ties go to the earlier reading. Thinning
-// already-thinned readings changes nothing, so it is safe to run every time.
+// the first reading in each clock hour -- the one nearest the top of the hour
+// that still falls inside it. Choosing within the clock hour, rather than the
+// nearest top of an hour, is what observed_hourly and accumulateRain group by,
+// so each thinned hour holds exactly one reading there; and a clock hour never
+// spans two months, so thinning month files one at a time cannot keep two
+// readings for the same hour. Thinning already-thinned readings changes
+// nothing, so it is safe to run on every collect.
 func thinBefore(readings []observation, cutoff time.Time) []observation {
-	type pick struct {
-		reading  observation
-		distance time.Duration
-	}
-	best := map[int64]pick{}
+	first := map[int64]observation{}
 	var kept []observation
 	for _, reading := range readings {
 		if !reading.Time.Before(cutoff) {
 			kept = append(kept, reading)
 			continue
 		}
-		hour := nearestHour(reading.Time)
-		distance := reading.Time.Sub(hour).Abs()
-		if current, ok := best[hour.Unix()]; !ok || distance < current.distance {
-			best[hour.Unix()] = pick{reading, distance}
+		hour := reading.Time.Truncate(time.Hour).Unix()
+		if current, ok := first[hour]; !ok || reading.Time.Before(current.Time) {
+			first[hour] = reading
 		}
 	}
 
-	thinned := make([]observation, 0, len(best)+len(kept))
-	for _, chosen := range best {
-		thinned = append(thinned, chosen.reading)
+	thinned := make([]observation, 0, len(first)+len(kept))
+	for _, reading := range first {
+		thinned = append(thinned, reading)
 	}
 	thinned = append(thinned, kept...)
 	sort.Slice(thinned, func(i, j int) bool { return thinned[i].Time.Before(thinned[j].Time) })
 	return thinned
 }
 
-// compactEarlierMonths thins the month the two-week line currently falls in,
-// when that is not the month this run just wrote (which archiveObservation
-// thins itself). For the first two weeks of a month the line is still in the
-// previous one; the day before the line is checked too, so the last readings
-// of a month are thinned once the line has moved past its end.
+// compactEarlierMonths thins the month the two-week line falls in and the one
+// before it, leaving out the month this run just wrote (archiveObservation
+// thins that itself). Checking the month before as well means the end of a
+// month is thinned once the line has passed it even if the collector was down
+// when it did; a month older than that is left to the compact event.
 func (a *app) compactEarlierMonths(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-denseRetention)
+	cutoffMonth := time.Date(cutoff.In(a.zone).Year(), cutoff.In(a.zone).Month(), 1, 0, 0, 0, 0, a.zone)
 	current := now.In(a.zone).Format("2006-01")
 
-	seen := map[string]bool{current: true}
-	for _, at := range []time.Time{cutoff.AddDate(0, 0, -1), cutoff} {
-		month := at.In(a.zone).Format("2006-01")
-		if seen[month] {
+	for _, start := range []time.Time{cutoffMonth.AddDate(0, -1, 0), cutoffMonth} {
+		month := start.Format("2006-01")
+		if month == current {
 			continue
 		}
-		seen[month] = true
-
-		stored, err := a.loadMonth(ctx, month)
-		if err != nil {
-			return fmt.Errorf("load %s: %w", month, err)
-		}
-		thinned := thinBefore(stored.Readings, cutoff)
-		if len(thinned) == len(stored.Readings) {
-			continue
-		}
-		if err := a.saveJSON(ctx, observationsKey(a.prefix, month), monthObservations{Month: month, Readings: thinned}); err != nil {
-			return fmt.Errorf("write %s: %w", month, err)
+		if _, err := a.compactMonth(ctx, month, cutoff); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// compactMonth thins one month file, writing it back only if anything was
+// removed, and reports how many readings it removed.
+func (a *app) compactMonth(ctx context.Context, month string, cutoff time.Time) (int, error) {
+	stored, err := a.loadMonth(ctx, month)
+	if err != nil {
+		return 0, fmt.Errorf("load %s: %w", month, err)
+	}
+	thinned := thinBefore(stored.Readings, cutoff)
+	removed := len(stored.Readings) - len(thinned)
+	if removed == 0 {
+		return 0, nil
+	}
+	if err := a.saveJSON(ctx, observationsKey(a.prefix, month), monthObservations{Month: month, Readings: thinned}); err != nil {
+		return 0, fmt.Errorf("write %s: %w", month, err)
+	}
+	return removed, nil
+}
+
+// compactAll thins every month stored for the location. It is what the
+// {"location": ..., "compact": true} event runs: once when the retention rule
+// was introduced, and again after anything that left an old month dense, such
+// as an outage longer than a month. It makes no API calls.
+func (a *app) compactAll(ctx context.Context, now time.Time) (any, error) {
+	cutoff := now.Add(-denseRetention)
+	prefix := a.prefix + observationsPrefix
+
+	months := []string{}
+	paginator := s3.NewListObjectsV2Paginator(a.objects, &s3.ListObjectsV2Input{Bucket: &a.bucket, Prefix: &prefix})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list %s: %w", prefix, err)
+		}
+		for _, object := range page.Contents {
+			name := strings.TrimSuffix(strings.TrimPrefix(aws.ToString(object.Key), prefix), ".json")
+			if _, err := time.Parse("2006-01", name); err == nil {
+				months = append(months, name)
+			}
+		}
+	}
+	sort.Strings(months)
+
+	removed := map[string]int{}
+	for _, month := range months {
+		count, err := a.compactMonth(ctx, month, cutoff)
+		if err != nil {
+			return nil, err
+		}
+		removed[month] = count
+	}
+	return map[string]any{"location": a.location, "months": months, "readings_removed": removed}, nil
 }

@@ -57,7 +57,11 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 	if err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	return scoped.serveResource(ctx, request)
+	response, err := scoped.serveResource(ctx, request)
+	if err != nil {
+		return response, err
+	}
+	return compressIfAccepted(request.Headers, response), nil
 }
 
 // serveResource answers one request against a single location's archive.

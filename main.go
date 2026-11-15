@@ -58,7 +58,10 @@ type app struct {
 // configured. The backfill fields turn the same function into a one-shot
 // history loader; see backfill.go.
 type collectEvent struct {
-	Location     string `json:"location"`
+	Location string `json:"location"`
+	// Compact thins every stored month to the retention rule and returns,
+	// without calling the API; see retention.go.
+	Compact      bool   `json:"compact"`
 	BackfillFrom string `json:"backfill_from"` // YYYY-MM-DD
 	BackfillTo   string `json:"backfill_to"`   // YYYY-MM-DD, defaults to today
 }
@@ -124,6 +127,9 @@ func (a *app) collect(ctx context.Context, event collectEvent) (any, error) {
 func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, error) {
 	if a.bucket == "" {
 		return nil, errors.New("ARCHIVE_BUCKET is required")
+	}
+	if event.Compact {
+		return a.compactAll(ctx, a.now())
 	}
 
 	weather, err := a.openWeather(ctx)
