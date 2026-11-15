@@ -129,9 +129,12 @@ func mergeAlertHistory(stored []alertRecord, seen []alertDetail, now time.Time) 
 
 // servedAlertRecord is one alert as it was observed, in epoch milliseconds.
 // active_from/active_to is the span the dashboard draws: from the announced
-// start (or when first seen, if the API gave none or gave a later one) to the
-// last run that still saw it, or to now while it is still in force -- but never
-// past its announced end, which the collector also stops carrying it at.
+// start (or when first seen, if the API gave none or gave a later one) to now
+// while it is still in force. Once it is over, the span ends at the announced
+// end if that falls before the run that would have seen it next -- it simply
+// ran its course -- and otherwise at the last run that saw it, because it was
+// lifted early. That choice depends only on the record, so a finished span
+// does not change as time passes.
 type servedAlertRecord struct {
 	Event       string `json:"event"`
 	SenderName  string `json:"sender_name"`
@@ -149,22 +152,22 @@ func presentAlertRecord(record alertRecord, now time.Time) servedAlertRecord {
 	if record.Start > 0 && record.Start < from {
 		from = record.Start
 	}
+	lastSeen := time.Unix(record.LastSeen, 0)
 	// Seen recently enough that it may still be in force; a missed run should
 	// not cut it short.
-	recent := now.Sub(time.Unix(record.LastSeen, 0)) <= alertOngoingWithin
+	recent := now.Sub(lastSeen) <= alertOngoingWithin
 	expired := record.End > 0 && !time.Unix(record.End, 0).After(now)
-
-	to := time.Unix(record.LastSeen, 0)
-	if recent {
-		to = now
-		if expired {
-			to = time.Unix(record.End, 0)
-		}
-	}
 	ongoing := recent && !expired
-	state := "解除"
-	if ongoing {
-		state = "発表中"
+
+	to := now
+	state := "発表中"
+	if !ongoing {
+		state = "解除"
+		to = lastSeen
+		end := time.Unix(record.End, 0)
+		if record.End > 0 && end.After(lastSeen) && !end.After(lastSeen.Add(alertOngoingWithin)) {
+			to = end
+		}
 	}
 	return servedAlertRecord{
 		Event:       record.Event,

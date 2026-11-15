@@ -60,6 +60,14 @@ func TestPresentAlertRecordSpan(t *testing.T) {
 	if expired.Ongoing || expired.State != "解除" || expired.ActiveTo != end.UnixMilli() {
 		t.Errorf("expired: got %+v", expired)
 	}
+	// ...and stays there however much later it is asked about.
+	if later := presentAlertRecord(alertRecord{
+		alertDetail: alertDetail{Event: "雷注意報", Start: start.Unix(), End: end.Unix()},
+		FirstSeen:   start.Unix(),
+		LastSeen:    now.Add(-15 * time.Minute).Unix(),
+	}, now.Add(24*time.Hour)); later.ActiveTo != end.UnixMilli() {
+		t.Errorf("expired, a day later: active_to %d, want %d", later.ActiveTo, end.UnixMilli())
+	}
 }
 
 func TestAlertTimelineMergesOverlappingSpansPerEvent(t *testing.T) {

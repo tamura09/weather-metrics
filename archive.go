@@ -21,11 +21,13 @@ import (
 // can live in metrics. They live here and are read back through the Infinity
 // datasource.
 //
-// Three objects, split by how they change:
+// Four objects, split by how they change:
 //
 //	observations/YYYY-MM.json  append-only, one record per collect run
 //	daily/YYYY.json            one record per date, rewritten as a date settles
 //	forecast.json              latest snapshot, replaced wholesale each run
+//	alerts/YYYY.json           one record per alert ID, updated only by runs
+//	                           that see an alert (see alerts.go)
 const (
 	observationsPrefix = "observations/"
 	dailyPrefix        = "daily/"
