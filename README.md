@@ -102,6 +102,7 @@ location's coordinates are filled in (so no run has written there yet):
 aws s3 cp --recursive s3://<bucket>/weather/observations/ s3://<bucket>/weather/morioka/observations/
 aws s3 cp --recursive s3://<bucket>/weather/daily/ s3://<bucket>/weather/morioka/daily/
 aws s3 cp s3://<bucket>/weather/forecast.json s3://<bucket>/weather/morioka/forecast.json
+aws s3 cp --recursive s3://<bucket>/weather/alerts/ s3://<bucket>/weather/morioka/alerts/
 ```
 
 The dashboard's queries need `location=` added in the same change. Metrics move

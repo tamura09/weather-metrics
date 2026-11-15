@@ -198,11 +198,14 @@ func presentAlertRecord(record alertRecord, now time.Time) servedAlertRecord {
 }
 
 // servedAlertHistory returns the alerts whose observed span overlaps the
-// window, newest first. The year before the window is read too, because an
-// alert is filed under the year it started and can run past New Year.
+// window, newest first. An alert is filed under the year of its announced
+// start, which can differ from the years its span covers in both directions:
+// one that started in December runs on past New Year, and one announced on
+// 31 December for 1 January was already seen the year before. So the years
+// either side of the window are read too.
 func (a *app) servedAlertHistory(ctx context.Context, from, to, now time.Time) ([]servedAlertRecord, error) {
 	served := []servedAlertRecord{}
-	for _, year := range yearsBetween(from.AddDate(-1, 0, 0), to, a.zone) {
+	for _, year := range yearsBetween(from.AddDate(-1, 0, 0), to.AddDate(1, 0, 0), a.zone) {
 		archive, err := a.loadAlertYear(ctx, year)
 		if err != nil {
 			return nil, fmt.Errorf("alerts %s: %w", year, err)
