@@ -111,7 +111,7 @@ func (a *app) serveResource(ctx context.Context, request events.LambdaFunctionUR
 			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "cannot read alert history"})
 		}
 		if resource == "alert_timeline" {
-			return jsonResponse(http.StatusOK, alertTimeline(alerts))
+			return jsonResponse(http.StatusOK, alertTimelineOrPlaceholder(alertTimeline(alerts), from))
 		}
 		return jsonResponse(http.StatusOK, alerts)
 
