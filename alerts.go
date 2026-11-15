@@ -43,12 +43,24 @@ func alertsKey(prefix, year string) string {
 
 // alertYear files an alert under the year its announced start falls in, which
 // unlike first_seen is known before the record is read, so a later run finds
-// the record it is updating without searching.
-func alertYear(alert alertDetail, zone *time.Location, now time.Time) string {
+// the record it is updating without searching. An alert with no start goes
+// under the year it was first seen, which a run after New Year has to look up:
+// filing it under the new year would split one alert into two records.
+func (a *app) alertYear(ctx context.Context, alert alertDetail, now time.Time) (string, error) {
 	if alert.Start > 0 {
-		return strconv.Itoa(time.Unix(alert.Start, 0).In(zone).Year())
+		return strconv.Itoa(time.Unix(alert.Start, 0).In(a.zone).Year()), nil
 	}
-	return strconv.Itoa(now.In(zone).Year())
+	previous := strconv.Itoa(now.In(a.zone).Year() - 1)
+	stored, err := a.loadAlertYear(ctx, previous)
+	if err != nil {
+		return "", fmt.Errorf("read alerts %s: %w", previous, err)
+	}
+	for _, record := range stored.Alerts {
+		if record.ID == alert.ID {
+			return previous, nil
+		}
+	}
+	return strconv.Itoa(now.In(a.zone).Year()), nil
 }
 
 // archiveAlerts records the alerts in force on this run. Nothing is written on
@@ -59,7 +71,10 @@ func (a *app) archiveAlerts(ctx context.Context, alerts []alertDetail, now time.
 		if alert.ID == "" {
 			continue
 		}
-		year := alertYear(alert, a.zone, now)
+		year, err := a.alertYear(ctx, alert, now)
+		if err != nil {
+			return err
+		}
 		byYear[year] = append(byYear[year], alert)
 	}
 

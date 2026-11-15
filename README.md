@@ -264,7 +264,7 @@ Every query also takes `location=<location ID>`, which is required when
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
 | `?resource=alerts` | Active alerts, with epoch-millisecond start and end for a time axis. |
-| `?resource=alert_history&from=<ms>&to=<ms>` | Every recorded alert whose span overlaps the window, newest first. `active_from`/`active_to` run from the announced start to the last run that saw it, or to now while `ongoing`. |
+| `?resource=alert_history&from=<ms>&to=<ms>` | Every recorded alert whose span overlaps the window, newest first. `active_from` is the announced start, or `first_seen` if there is none or it is earlier. `active_to` is now while `ongoing`; once over, it is the announced end if that falls within one grace period (30 minutes) after `last_seen` -- the alert ran its course -- and otherwise `last_seen`, because it was lifted early. |
 | `?resource=alert_timeline&from=<ms>&to=<ms>` | The same spans as `{time, event, state}` transitions, merged per event, for a state-timeline partitioned by `event`. `state` is the level (`特別警報` / `警報` / `注意報`, or `発表中` for a name outside the JMA scheme), or empty from the moment it was lifted. |
 
 A lag that keeps growing is the same signal a stalled collector would otherwise
