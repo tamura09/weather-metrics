@@ -57,7 +57,11 @@ func (a *app) serve(ctx context.Context, request events.LambdaFunctionURLRequest
 	if err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	return scoped.serveResource(ctx, request)
+	response, err := scoped.serveResource(ctx, request)
+	if err != nil {
+		return response, err
+	}
+	return compressIfAccepted(request.Headers, response), nil
 }
 
 // serveResource answers one request against a single location's archive.
@@ -787,8 +791,9 @@ type servedObservedHour struct {
 	SnowMm      float64 `json:"snow_mm"`
 	Condition   string  `json:"condition"`
 	Description string  `json:"description"`
-	// Readings is 4 on a complete hour at the fifteen-minute schedule. Fewer means
-	// runs were missed, which is worth being able to see rather than guess at.
+	// Readings is 4 on a complete hour at the fifteen-minute schedule, and 1 for
+	// hours older than two weeks, which are thinned to one reading (see
+	// retention.go). Fewer than 4 in the last two weeks means runs were missed.
 	Readings int `json:"readings"`
 }
 

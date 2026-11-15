@@ -58,7 +58,10 @@ type app struct {
 // configured. The backfill fields turn the same function into a one-shot
 // history loader; see backfill.go.
 type collectEvent struct {
-	Location     string `json:"location"`
+	Location string `json:"location"`
+	// Compact thins every stored month to the retention rule and returns,
+	// without calling the API; see retention.go.
+	Compact      bool   `json:"compact"`
 	BackfillFrom string `json:"backfill_from"` // YYYY-MM-DD
 	BackfillTo   string `json:"backfill_to"`   // YYYY-MM-DD, defaults to today
 }
@@ -125,6 +128,9 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	if a.bucket == "" {
 		return nil, errors.New("ARCHIVE_BUCKET is required")
 	}
+	if event.Compact {
+		return a.compactAll(ctx, a.now())
+	}
 
 	weather, err := a.openWeather(ctx)
 	if err != nil {
@@ -164,8 +170,13 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	}
 
 	reading := buildObservation(present, air, now)
-	if err := a.archiveObservation(ctx, reading); err != nil {
+	if err := a.archiveObservation(ctx, reading, now); err != nil {
 		return nil, fmt.Errorf("archive observation: %w", err)
+	}
+	// Thinning an earlier month is housekeeping; the next run retries it, so a
+	// failure here should not cost this run its reading.
+	if err := a.compactEarlierMonths(ctx, now); err != nil {
+		log.Printf("thin earlier observations: %v", err)
 	}
 
 	dayRecords := buildDays(days.Data, a.zone, now)

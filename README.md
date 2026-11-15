@@ -63,9 +63,10 @@ makes either readable, and the gap between them is itself worth watching.
 
 The same applies per date in the archive: `temp_max`/`temp_min` on a daily row
 are the API's, and become history once the date settles, while
-`observed_temp_max`/`observed_temp_min` are computed from the fifteen-minute
-readings this collector took (ten-minute before the move to several locations). A backfilled date has the former and not the
-latter — `observations` on the row says which.
+`observed_temp_max`/`observed_temp_min` are computed from the readings this
+collector took: fifteen-minute for the last two weeks, hourly before that (see
+Retention). A backfilled date has the former and not the latter --
+`observations` on the row says which.
 
 ## Locations
 
@@ -174,7 +175,7 @@ the API does not return a tendency.
 `<prefix>` below is `ARCHIVE_PREFIX` + location ID + `/`, e.g. `weather/miyako/`.
 
 ```text
-<prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }
+<prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
 <prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
@@ -198,6 +199,44 @@ forward past today without undoing history.
 
 `forecast.json` is replaced whole on every run, except for alert text, which is
 carried across runs because re-fetching it costs a billed call.
+
+## Retention: two weeks dense, hourly for good
+
+Observations are kept at the collector's fifteen-minute resolution for two
+weeks. After that they are thinned to one reading per clock hour -- the first
+one in the hour, so the same hours `observed_hourly` groups by -- and the hourly
+readings are kept for good. The kept reading carries the `rain_1h`/`snow_1h`
+of its hour's wettest reading rather than its own, because a rolling one-hour
+total taken at the top of the hour describes the hour before; that keeps the
+observed precipitation for a day the same after thinning as before.
+
+Each run thins the month it writes, the month the two-week line is in, and the
+month before that. Anything older that is still dense -- the archive from
+before this rule, or a month an outage of more than a month left behind -- is
+thinned by the compact event, which makes no API calls and leaves the month a
+scheduled run may be writing (the current one, and the previous one for the
+first hours of a month) to those runs:
+
+```bash
+aws lambda invoke --region us-east-1 --function-name weather-metrics \
+  --payload '{"location":"morioka","compact":true}' --cli-binary-format raw-in-base64-out \
+  /dev/stdout
+```
+
+This is about the serve function, not storage. The raw observation endpoint
+returns every reading in the window in one Lambda response, capped at 6MB
+(about 440 bytes a reading as JSON): at fifteen minutes one location went over
+it at about three months. With two dense weeks and hourly beyond, a year is
+about 10,000 rows, 4.4MB as JSON and about 400KB gzipped (see Serve mode).
+
+What it costs, for anything older than two weeks: the kept reading is the
+snapshot at the top of the hour, so the temperature, humidity, pressure and
+wind speed between two hours are gone. That shows in `observed_temp_max`/
+`observed_temp_min` on a daily row (a peak between hours is missed) and in
+`observed_hourly`, whose `temp_max`/`temp_min` for an hour become the one
+value. What is kept from the whole hour: the precipitation (as above), the
+dominant `condition`, and the strongest `wind_gust`. For a settled date the API's own
+`temp_max`/`temp_min`/`rain` on the daily row are the better figures anyway.
 
 ## Rainfall is not a sum
 
@@ -261,7 +300,7 @@ Every query also takes `location=<location ID>`, which is required when
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
-| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour at the fifteen-minute schedule; 6 for hours collected before it, at ten minutes). Starts when the collector did, unlike the backfilled daily history. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour within the last two weeks, 1 for older hours, which are thinned). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |
@@ -272,6 +311,12 @@ Every query also takes `location=<location ID>`, which is required when
 A lag that keeps growing is the same signal a stalled collector would otherwise
 need a separate success/failure metric for: nothing new lands in the archive,
 whatever the reason.
+
+Responses are gzipped when the request's `Accept-Encoding` allows it, which
+Grafana's Infinity datasource does by default. That is what keeps a long
+window well inside the 6MB Lambda response cap (JSON of this shape compresses
+about 14x); a client that does not ask still gets plain JSON. Responses over
+1MB before compression are logged with their size, to see how close the cap is.
 
 Every request must carry the shared secret in an `x-weather-token` header; the
 Function URL has no AWS auth of its own because Infinity cannot sign SigV4.
