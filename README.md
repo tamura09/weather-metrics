@@ -174,7 +174,7 @@ the API does not return a tendency.
 `<prefix>` below is `ARCHIVE_PREFIX` + location ID + `/`, e.g. `weather/miyako/`.
 
 ```text
-<prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }
+<prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
 <prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
@@ -198,6 +198,25 @@ forward past today without undoing history.
 
 `forecast.json` is replaced whole on every run, except for alert text, which is
 carried across runs because re-fetching it costs a billed call.
+
+## Retention: two weeks dense, hourly for good
+
+Observations are kept at the collector's fifteen-minute resolution for two
+weeks. After that each run thins them to one reading per clock hour -- the one
+nearest the top of the hour -- and the hourly readings are kept for good. The
+readings from before this existed (ten-, then fifteen-minute) were thinned the
+same way once.
+
+This is about the serve function, not storage. The raw observation endpoint
+returns every reading in the window in one Lambda response, capped at 6MB
+(about 440 bytes a reading): at fifteen minutes one location went over it at
+about three months. With two dense weeks and hourly beyond, a year is about
+10,000 rows (4.4MB), so a window much past a year will still hit the cap.
+
+What it costs: `observed_temp_max`/`observed_temp_min` and the observed
+rainfall for a date older than two weeks are worked out from the hourly
+readings, so a peak between two hours is lost. For a settled date the API's own
+`temp_max`/`temp_min`/`rain` on the daily row are the better figures anyway.
 
 ## Rainfall is not a sum
 
@@ -261,7 +280,7 @@ Every query also takes `location=<location ID>`, which is required when
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
 | `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
-| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour at the fifteen-minute schedule; 6 for hours collected before it, at ten minutes). Starts when the collector did, unlike the backfilled daily history. |
+| `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour within the last two weeks, 1 for older hours, which are thinned). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |
 | `?resource=forecast` | The stored daily forecast, today onward. |
 | `?resource=hourly` | The stored hourly forecast, about a day ahead. |

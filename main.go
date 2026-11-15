@@ -164,8 +164,13 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	}
 
 	reading := buildObservation(present, air, now)
-	if err := a.archiveObservation(ctx, reading); err != nil {
+	if err := a.archiveObservation(ctx, reading, now); err != nil {
 		return nil, fmt.Errorf("archive observation: %w", err)
+	}
+	// Thinning an earlier month is housekeeping; the next run retries it, so a
+	// failure here should not cost this run its reading.
+	if err := a.compactEarlierMonths(ctx, now); err != nil {
+		log.Printf("thin earlier observations: %v", err)
 	}
 
 	dayRecords := buildDays(days.Data, a.zone, now)

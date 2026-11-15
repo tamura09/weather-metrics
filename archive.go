@@ -23,7 +23,8 @@ import (
 //
 // Four objects, split by how they change:
 //
-//	observations/YYYY-MM.json  append-only, one record per collect run
+//	observations/YYYY-MM.json  one record per collect run for two weeks, then
+//	                           one per clock hour (see retention.go)
 //	daily/YYYY.json            one record per date, rewritten as a date settles
 //	forecast.json              latest snapshot, replaced wholesale each run
 //	alerts/YYYY.json           one record per alert ID, updated only by runs
@@ -148,14 +149,16 @@ func dailyKey(prefix, year string) string {
 // archiveObservation folds one reading into its month. Readings are keyed on
 // the minute they were taken, so a retry inside the same minute corrects the
 // stored copy rather than adding a near-duplicate point to every graph.
-func (a *app) archiveObservation(ctx context.Context, reading observation) error {
+// archiveObservation merges the reading into its month and, in the same write,
+// thins whatever in that month has crossed the two-week line (retention.go).
+func (a *app) archiveObservation(ctx context.Context, reading observation, now time.Time) error {
 	month := reading.Time.In(a.zone).Format("2006-01")
 	existing, err := a.loadMonth(ctx, month)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", month, err)
 	}
 
-	merged := mergeObservations(existing.Readings, []observation{reading})
+	merged := thinBefore(mergeObservations(existing.Readings, []observation{reading}), now.Add(-denseRetention))
 	return a.saveJSON(ctx, observationsKey(a.prefix, month), monthObservations{Month: month, Readings: merged})
 }
 

@@ -787,8 +787,9 @@ type servedObservedHour struct {
 	SnowMm      float64 `json:"snow_mm"`
 	Condition   string  `json:"condition"`
 	Description string  `json:"description"`
-	// Readings is 4 on a complete hour at the fifteen-minute schedule. Fewer means
-	// runs were missed, which is worth being able to see rather than guess at.
+	// Readings is 4 on a complete hour at the fifteen-minute schedule, and 1 for
+	// hours older than two weeks, which are thinned to one reading (see
+	// retention.go). Fewer than 4 in the last two weeks means runs were missed.
 	Readings int `json:"readings"`
 }
 
