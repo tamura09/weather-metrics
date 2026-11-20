@@ -286,7 +286,12 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// Starting from a different ID each fifteen-minute slot gives every one
 	// its turn at the front without keeping any state between runs.
 	var failures []string
-	for _, id := range rotateIDs(unknown, now) {
+	order := rotateIDs(unknown, now)
+	for i, id := range order {
+		if alertCtx.Err() != nil {
+			failures = append(failures, fmt.Sprintf("lookup budget of %s used up; %d alert(s) left for the next run", alertLookupBudget, len(order)-i))
+			break
+		}
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
