@@ -289,6 +289,13 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		log.Printf("read stored alerts, fetching them again: %v", err)
 		stored = forecastSnapshot{}
 	}
+	return lookupAlerts(ctx, weather, ids, stored, now)
+}
+
+// lookupAlerts is resolveAlerts after the snapshot has been read: it sorts
+// the IDs into texts in force, ended IDs and IDs still without text, and
+// fetches what it must within the budget.
+func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, stored forecastSnapshot, now time.Time) (alertLookup, error) {
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
 		known[alert.ID] = alert

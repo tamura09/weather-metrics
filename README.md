@@ -42,17 +42,16 @@ The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its 
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
-stored snapshot and that are not already known to be over (`ended_alert_ids`,
-kept while `/current` still lists them), which on a day with no weather warnings is none of them. If
-an alert cannot be decoded it is never stored, so it is fetched again on later
-runs while it is still in force; a `decode alert` line in the logs means calls
-are being spent that way. Lookups of unknown IDs share a three-minute budget
-per run and start from a different ID each run, so with several unknown IDs a
-given one is fetched only when its turn comes within the budget. An alert
-whose text has not been fetched is left out of the snapshot's `alerts` and of
-`alerts/` until a run gets it, though it is counted in `alerts_active`: its history record starts, and
-`first_seen` is set, on that run, and an alert lifted before then never
-appears in the history.
+stored snapshot, or whose cached text is past its end (to catch an
+extension), and that are not already known to be over (`ended_alert_ids`,
+kept while `/current` still lists them). On a day with no weather warnings
+that is none of them. If an alert cannot be decoded it is never stored, so it
+is fetched again on later runs while it is still in force; a `decode alert`
+line in the logs means calls are being spent that way. All these lookups share
+a three-minute budget per run and start from a different ID each run, so with
+several of them a given one is fetched only when its turn comes within the
+budget. How an alert without text is counted and archived is described with
+the archive layout under [The archive](#the-archive) below.
 
 A failed run spends calls too: `/current` has already been paid for by the
 time `/timeline/1day` fails. The daily timeline often takes more than 20
