@@ -119,7 +119,9 @@ type forecastSnapshot struct {
 	Alerts         []alertDetail `json:"alerts"`
 	// AlertsActive is how many alerts are in force: those in Alerts plus the
 	// IDs /current reported whose text could not be fetched this run. An
-	// alert already past its end is in neither. Snapshots written before it
+	// alert confirmed over (fetched text says it has ended, or the API
+	// answered 404/410) is in neither; one whose cached text is past its end
+	// but could not be re-checked is counted. Snapshots written before it
 	// existed read as zero.
 	AlertsActive int `json:"alerts_active,omitempty"`
 	// EndedAlertIDs are IDs /current still lists although they are confirmed
