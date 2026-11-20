@@ -226,6 +226,10 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		// without losing texts and ended IDs it could not see.
 		if stored, err := a.loadForecast(ctx); err == nil {
 			snapshot.Alerts, snapshot.EndedAlertIDs, snapshot.AlertsActive = carryAlertCache(stored, snapshot, uniqueIDs(present.Alerts), now)
+		} else if errors.Is(err, errUndecodable) {
+			// Readable this time but corrupt: replace it, as a run that found
+			// it corrupt on the first read would.
+			log.Printf("forecast snapshot is corrupt, replacing it: %v", err)
 		} else {
 			save = false
 			log.Printf("forecast snapshot left as it was, since it could not be read this run: %v", err)
@@ -356,7 +360,9 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 			resolved = append(resolved, alert)
 			continue
 		}
-		if wasEnded[id] {
+		// An ID confirmed over is not fetched again, except once an hour in
+		// case the issuer extended it under the same ID afterwards.
+		if wasEnded[id] && !endedRecheckDue(now) {
 			result.ended = append(result.ended, id)
 			continue
 		}
@@ -406,6 +412,12 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 		return result, errors.New(strings.Join(failures, "; "))
 	}
 	return result, nil
+}
+
+// endedRecheckDue reports whether this run is the one each hour (the run in
+// the first fifteen-minute slot) that re-checks IDs already confirmed over.
+func endedRecheckDue(now time.Time) bool {
+	return (now.Unix()/(15*60))%4 == 0
 }
 
 // carryAlertCache merges the alert cache of a snapshot this run could not

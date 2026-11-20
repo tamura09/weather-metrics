@@ -45,7 +45,11 @@ func alertServer(t *testing.T, texts map[string]alertDetail) (*openWeather, func
 }
 
 func TestLookupAlertsSortsIDs(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
+	// Not the hourly slot that re-checks IDs already confirmed over.
+	now := time.Unix(1_800_000_000, 0).Add(15 * time.Minute)
+	if endedRecheckDue(now) {
+		t.Fatal("test time falls in the re-check slot")
+	}
 	past := now.Add(-time.Hour).Unix()
 	future := now.Add(time.Hour).Unix()
 
@@ -156,5 +160,27 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 	// new and unfetched with text; stale and no-text still without.
 	if active != 4 {
 		t.Errorf("active = %d, want 4", active)
+	}
+}
+
+func TestLookupAlertsRechecksEndedIDsHourly(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	if !endedRecheckDue(now) {
+		t.Fatal("test time is not the re-check slot")
+	}
+	weather, asked := alertServer(t, map[string]alertDetail{
+		"extended": {ID: "extended", End: now.Add(time.Hour).Unix()},
+	})
+	stored := forecastSnapshot{EndedAlertIDs: []string{"extended"}}
+
+	got, err := lookupAlerts(context.Background(), weather, []string{"extended"}, stored, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(asked()); n != 1 {
+		t.Errorf("sent %d requests, want 1", n)
+	}
+	if len(got.alerts) != 1 || len(got.ended) != 0 {
+		t.Errorf("alerts=%v ended=%v; want the extension picked up", got.alerts, got.ended)
 	}
 }

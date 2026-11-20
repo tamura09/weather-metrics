@@ -224,9 +224,9 @@ per run. Unfetched texts are tried again on a
 later run, and such an alert is not written to `alerts/` until its text has
 been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
-An ID in `ended_alert_ids` is not fetched again while `/current` lists it, to
-save calls, so an alert extended under the same ID after being found over is
-missed until it reappears under a new ID. If the stored snapshot cannot be
+An ID in `ended_alert_ids` is fetched again only once an hour while
+`/current` lists it, to save calls, so an alert extended under the same ID
+after being found over is picked up within an hour. If the stored snapshot cannot be
 read, the run treats it as empty and carries on, fetching the texts again
 within the budget. When the object could not be read at all (a transient S3
 error), the run reads it once more before saving and carries its cached texts

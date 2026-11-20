@@ -295,13 +295,16 @@ func (o *openWeather) get(ctx context.Context, endpoint string, query url.Values
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The status decides what the caller does (a 404 ends an alert), so it
+		// is kept even if the body could not be read in full; the body is
+		// only for diagnosis. The key and coordinates are in the query
+		// string, so the URL is not safe to put in an error that lands in
+		// CloudWatch Logs.
+		return nil, &statusError{path: parsed.Path, code: resp.StatusCode, body: truncate(body, 500)}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// The key and coordinates are in the query string, so the URL is not
-		// safe to put in an error that lands in CloudWatch Logs.
-		return nil, &statusError{path: parsed.Path, code: resp.StatusCode, body: truncate(body, 500)}
 	}
 	return body, nil
 }
