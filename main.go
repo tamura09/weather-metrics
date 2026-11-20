@@ -260,10 +260,11 @@ type alertLookup struct {
 	// unfetched is how many IDs are presumably in force but have no text yet,
 	// because their lookup failed or did not fit in the budget.
 	unfetched int
-	// ended lists IDs /current still reports whose freshly fetched text says
-	// they are over. They are kept so later runs neither fetch nor count them
-	// again. A cached text past its end does not put an ID here; it is
-	// fetched again first.
+	// ended lists IDs /current still reports that are taken to be over. They
+	// are kept so later runs neither fetch nor count them again. An ID gets
+	// here when freshly fetched text says it is over, or when its cached text
+	// is past its end and the re-fetch made to catch an extension failed or
+	// did not fit the budget, in which case the cached end stands.
 	ended []string
 	calls int // /alert/{id} requests sent, failed ones included
 }
