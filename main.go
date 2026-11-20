@@ -272,12 +272,21 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	defer cancel()
 
 	var resolved []alertDetail
-	var failures []string
+	var unknown []string
 	for _, id := range ids {
 		if alert, ok := known[id]; ok {
 			resolved = append(resolved, alert)
 			continue
 		}
+		unknown = append(unknown, id)
+	}
+
+	// The API lists IDs in the same order every run, so IDs that keep timing
+	// out at the front would use up the budget each time and starve the rest.
+	// Starting from a different ID each fifteen-minute slot gives every one
+	// its turn at the front without keeping any state between runs.
+	var failures []string
+	for _, id := range rotateIDs(unknown, now) {
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
@@ -291,6 +300,16 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return merged, errors.New(strings.Join(failures, "; "))
 	}
 	return merged, nil
+}
+
+// rotateIDs returns ids starting from an offset that advances once per
+// fifteen-minute slot of now.
+func rotateIDs(ids []string, now time.Time) []string {
+	if len(ids) < 2 {
+		return ids
+	}
+	offset := int((now.Unix() / (15 * 60)) % int64(len(ids)))
+	return append(append([]string{}, ids[offset:]...), ids[:offset]...)
 }
 
 func (a *app) openWeather(ctx context.Context) (*openWeather, error) {
