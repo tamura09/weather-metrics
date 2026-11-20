@@ -212,13 +212,15 @@ the API does not return a tendency.
 those in `alerts` plus any ID `/current` reported whose text could not be
 fetched that run, so `weather_alerts_active` and the `?resource=summary` count
 can exceed the rows of `?resource=alerts` and the `weather_alert` series. An ID
-is left out of the count only when text fetched for it says its announced end
-has passed; such IDs go into `ended_alert_ids` while `/current` keeps listing
+is left out of the count only when its end is confirmed: text fetched for it
+says its announced end has passed, or the API answers 404/410 for it. Such IDs
+go into `ended_alert_ids` while `/current` keeps listing
 them, so they are neither fetched nor counted again. An ID with no text at all is counted
 even if it has in fact ended, since nothing says so yet. A cached text that has
 passed its end is fetched again before the ID is taken as over, in case the
-alert was extended; if that fetch fails or does not fit the budget, the cached
-end stands and the ID is taken as over. Unfetched texts are tried again on a
+alert was extended; if that fetch fails (other than 404/410) or does not fit
+the budget, the ID is counted and re-checked on the next run, at most one call
+per run. Unfetched texts are tried again on a
 later run, and such an alert is not written to `alerts/` until its text has
 been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.

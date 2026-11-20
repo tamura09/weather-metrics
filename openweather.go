@@ -301,7 +301,7 @@ func (o *openWeather) get(ctx context.Context, endpoint string, query url.Values
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// The key and coordinates are in the query string, so the URL is not
 		// safe to put in an error that lands in CloudWatch Logs.
-		return nil, fmt.Errorf("OpenWeather %s returned %d: %s", parsed.Path, resp.StatusCode, truncate(body, 500))
+		return nil, &statusError{path: parsed.Path, code: resp.StatusCode, body: truncate(body, 500)}
 	}
 	return body, nil
 }
@@ -323,4 +323,23 @@ func truncate(body []byte, limit int) string {
 		return text
 	}
 	return text[:limit] + "..."
+}
+
+// statusError is a non-2xx answer from OpenWeather. Its message carries the
+// path only: the key and coordinates are in the query string.
+type statusError struct {
+	path string
+	code int
+	body string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("OpenWeather %s returned %d: %s", e.path, e.code, e.body)
+}
+
+// isGone reports whether err says the resource does not exist (404 or 410),
+// which for /alert/{id} means the alert is no longer there to fetch.
+func isGone(err error) bool {
+	var status *statusError
+	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }

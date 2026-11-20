@@ -12,7 +12,8 @@ import (
 	"time"
 )
 
-// alertServer answers /alert/{id} from texts, and with 500 for any other ID.
+// alertServer answers /alert/{id} from texts, with 404 for IDs starting with
+// "gone", and with 500 for any other ID.
 // It records which IDs were asked for.
 func alertServer(t *testing.T, texts map[string]alertDetail) (*openWeather, func() []string) {
 	t.Helper()
@@ -24,6 +25,10 @@ func alertServer(t *testing.T, texts map[string]alertDetail) (*openWeather, func
 		asked = append(asked, id)
 		mu.Unlock()
 		alert, ok := texts[id]
+		if strings.HasPrefix(id, "gone") {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		if !ok {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
@@ -53,11 +58,12 @@ func TestLookupAlertsSortsIDs(t *testing.T) {
 		Alerts: []alertDetail{
 			{ID: "cached", Event: "大雨注意報", End: future},
 			{ID: "extended", End: past},      // re-checked, now runs on
-			{ID: "stale-failing", End: past}, // re-check fails: cached end stands
+			{ID: "stale-failing", End: past}, // re-check fails: counted, retried
+			{ID: "gone-stale", End: past},    // re-check says 404: ended
 		},
 		EndedAlertIDs: []string{"known-ended"},
 	}
-	ids := []string{"cached", "new", "extended", "over", "stale-failing", "never-fetched", "known-ended"}
+	ids := []string{"cached", "new", "extended", "over", "stale-failing", "gone-stale", "gone-new", "never-fetched", "known-ended"}
 
 	got, err := lookupAlerts(context.Background(), weather, ids, stored, now)
 	if err == nil {
@@ -71,11 +77,11 @@ func TestLookupAlertsSortsIDs(t *testing.T) {
 	if strings.Join(sorted(inForce), ",") != "cached,extended,new" {
 		t.Errorf("in force = %v, want cached, extended, new", inForce)
 	}
-	if strings.Join(got.ended, ",") != "known-ended,over,stale-failing" {
-		t.Errorf("ended = %v, want known-ended, over, stale-failing", got.ended)
+	if strings.Join(got.ended, ",") != "gone-new,gone-stale,known-ended,over" {
+		t.Errorf("ended = %v, want gone-new, gone-stale, known-ended, over", got.ended)
 	}
-	if got.unfetched != 1 {
-		t.Errorf("unfetched = %d, want 1 (never-fetched)", got.unfetched)
+	if got.unfetched != 2 {
+		t.Errorf("unfetched = %d, want 2 (stale-failing, never-fetched)", got.unfetched)
 	}
 	requested := asked()
 	for _, id := range requested {
@@ -83,8 +89,8 @@ func TestLookupAlertsSortsIDs(t *testing.T) {
 			t.Errorf("fetched %s, which needed no call", id)
 		}
 	}
-	if got.calls != len(requested) || got.calls != 5 {
-		t.Errorf("calls = %d, server saw %v; want 5", got.calls, requested)
+	if got.calls != len(requested) || got.calls != 7 {
+		t.Errorf("calls = %d, server saw %v; want 7", got.calls, requested)
 	}
 }
 
@@ -105,8 +111,10 @@ func TestLookupAlertsOutOfBudgetSortsTheRest(t *testing.T) {
 	if n := len(asked()); n != 0 || got.calls != 0 {
 		t.Errorf("sent %d requests (calls = %d), want none", n, got.calls)
 	}
-	if strings.Join(got.ended, ",") != "stale" || got.unfetched != 2 || len(got.alerts) != 0 {
-		t.Errorf("got ended=%v unfetched=%d alerts=%v; want ended=[stale] unfetched=2", got.ended, got.unfetched, got.alerts)
+	// Running out of budget confirms nothing, so even the stale cached ID is
+	// counted and retried rather than taken as ended.
+	if len(got.ended) != 0 || got.unfetched != 3 || len(got.alerts) != 0 {
+		t.Errorf("got ended=%v unfetched=%d alerts=%v; want none ended, unfetched=3", got.ended, got.unfetched, got.alerts)
 	}
 }
 
@@ -124,7 +132,7 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 			{ID: "unfetched", End: future},                 // run had no text: take the cached one
 			{ID: "lifted", End: future},                    // /current no longer lists it
 			{ID: "ended-now", End: future},                 // run found it over: run wins
-			{ID: "stale", End: now.Add(-time.Hour).Unix()}, // past its end: taken as ended
+			{ID: "stale", End: now.Add(-time.Hour).Unix()}, // past its end: left to re-check
 		},
 		EndedAlertIDs: []string{"ended-before", "ended-gone", "new"},
 	}
@@ -142,11 +150,11 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 	if strings.Join(sorted(got), ",") != "new,unfetched" {
 		t.Errorf("alerts = %v, want new, unfetched", got)
 	}
-	if strings.Join(ended, ",") != "ended-before,ended-now,stale" {
-		t.Errorf("ended = %v, want ended-before, ended-now, stale", ended)
+	if strings.Join(ended, ",") != "ended-before,ended-now" {
+		t.Errorf("ended = %v, want ended-before, ended-now", ended)
 	}
-	// new and unfetched with text; no-text still without.
-	if active != 3 {
-		t.Errorf("active = %d, want 3", active)
+	// new and unfetched with text; stale and no-text still without.
+	if active != 4 {
+		t.Errorf("active = %d, want 4", active)
 	}
 }

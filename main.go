@@ -276,11 +276,11 @@ type alertLookup struct {
 	// unfetched is how many IDs are presumably in force but have no text yet,
 	// because their lookup failed or did not fit in the budget.
 	unfetched int
-	// ended lists IDs /current still reports that are taken to be over. They
-	// are kept so later runs neither fetch nor count them again. An ID gets
-	// here when freshly fetched text says it is over, or when its cached text
-	// is past its end and the re-fetch made to catch an extension failed or
-	// did not fit the budget, in which case the cached end stands.
+	// ended lists IDs /current still reports that are confirmed over: fetched
+	// text says so, or the API answered 404/410 for the ID. They are kept so
+	// later runs neither fetch nor count them again. A failed or skipped
+	// re-check of a cached text past its end does not put an ID here; it is
+	// counted in unfetched and tried again on the next run.
 	ended []string
 	calls int // /alert/{id} requests sent, failed ones included
 	// keepStored is set when the stored snapshot could not be read for a
@@ -333,9 +333,8 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
 	// A day with many new alerts and a slow API could otherwise spend the
 	// whole invocation here and never save the forecast or push the metrics,
-	// so the lookups share one budget. A new ID cut off by it is not stored
-	// and is tried again on the next run; a cached one past its end is taken
-	// as ended (see noText).
+	// so the lookups share one budget. An ID cut off by it is counted and
+	// tried again on the next run.
 	// The budget also ends early enough before the invocation's own deadline
 	// to leave time for saving the snapshot and pushing to Grafana after it.
 	budgetEnd := time.Now().Add(alertLookupBudget)
@@ -375,18 +374,22 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
-			before := result.unfetched
-			for _, rest := range order[i:] {
-				result.noText(rest, known)
-			}
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run, %d taken as ended from cached text", time.Until(budgetEnd).Round(time.Second), httpTimeout, result.unfetched-before, len(order)-i-(result.unfetched-before)))
+			result.unfetched += len(order) - i
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
 			break
 		}
 		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-			result.noText(id, known)
+			// A 404 or 410 confirms the alert is gone, so stop paying for it.
+			// Anything else (a timeout, a 5xx) may pass, so the ID is counted
+			// and tried again on the next run.
+			if isGone(err) {
+				result.ended = append(result.ended, id)
+			} else {
+				result.unfetched++
+			}
 			continue
 		}
 		if alertOver(alert, now) {
@@ -405,24 +408,10 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	return result, nil
 }
 
-// noText records an ID whose text this run could not get. If the cached text
-// already says the alert is over -- it was only being re-checked for an
-// extension -- that stands, so the ID is taken as ended rather than counted
-// as active and fetched again every run; a 404 for a lifted alert would
-// otherwise do exactly that. An ID with no cached text is counted.
-func (r *alertLookup) noText(id string, known map[string]alertDetail) {
-	if _, cached := known[id]; cached {
-		r.ended = append(r.ended, id)
-		return
-	}
-	r.unfetched++
-}
-
 // carryAlertCache merges the alert cache of a snapshot this run could not
 // read at first into the one it built, for the IDs /current reports now
 // (ids). What the run itself decided wins: for an ID the run left without
-// text, a stored text is taken, or the ID is taken as ended if that text is
-// past its end, matching noText; a stored ended ID likewise. IDs /current no longer
+// text, a stored text still in force is taken, as is a stored ended ID. IDs /current no longer
 // reports are dropped. The returned count is alerts plus IDs still without
 // text, as AlertsActive.
 func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time) ([]alertDetail, []string, int) {
@@ -444,13 +433,12 @@ func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time
 		if !current[alert.ID] || decided[alert.ID] {
 			continue
 		}
-		// As in noText: a cached text past its end that the run could not
-		// re-check stands, so the ID is taken as ended.
+		// A cached text past its end that the run could not re-check is left
+		// undecided, so the ID is counted and re-checked on the next run.
 		if alertOver(alert, now) {
-			ended = append(ended, alert.ID)
-		} else {
-			alerts = append(alerts, alert)
+			continue
 		}
+		alerts = append(alerts, alert)
 		decided[alert.ID] = true
 	}
 	for _, id := range stored.EndedAlertIDs {
