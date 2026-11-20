@@ -608,3 +608,17 @@ func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 		t.Fatalf("input was modified: %v", ids)
 	}
 }
+
+func TestActiveAlertsCountsIDsWhoseTextWasNotFetched(t *testing.T) {
+	snapshot := forecastSnapshot{
+		Alerts:       []alertDetail{{ID: "a"}},
+		AlertsActive: countDistinct([]string{"a", "b", "b", ""}),
+	}
+	if got := snapshot.activeAlerts(); got != 2 {
+		t.Fatalf("activeAlerts = %d, want 2", got)
+	}
+	// A snapshot written before AlertsActive existed falls back to the texts.
+	if got := (forecastSnapshot{Alerts: []alertDetail{{ID: "a"}}}).activeAlerts(); got != 1 {
+		t.Fatalf("legacy activeAlerts = %d, want 1", got)
+	}
+}
