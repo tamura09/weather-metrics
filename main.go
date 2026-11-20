@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -200,7 +201,11 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
-	alerts, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	if errors.Is(err, errAlertCacheUnreadable) {
+		return nil, err
+	}
+	alerts := lookup.alerts
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
@@ -220,6 +225,8 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
+		AlertsActive:   len(alerts) + lookup.unfetched,
+		EndedAlertIDs:  lookup.ended,
 	}
 	if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
@@ -244,27 +251,47 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
 		"hours_stored":   len(snapshot.Hourly),
-		"alerts_active":  len(snapshot.Alerts),
+		"alerts_active":  snapshot.activeAlerts(),
 		"series_pushed":  pushed,
-		"api_calls_made": 3, // current + one day page + one hour page
+		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
 	}, nil
+}
+
+// alertLookup is what resolveAlerts found for the IDs /current reported.
+type alertLookup struct {
+	alerts []alertDetail // in force, with text
+	// unfetched is how many IDs are presumably in force but have no text yet,
+	// because their lookup failed or did not fit in the budget.
+	unfetched int
+	// ended lists IDs /current still reports whose freshly fetched text says
+	// they are over. They are kept so later runs neither fetch nor count them
+	// again. A cached text past its end does not put an ID here; it is
+	// fetched again first.
+	ended []string
+	calls int // /alert/{id} requests sent, failed ones included
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
 // 4.0 charges for /alert/{id} like any other call, so only IDs whose text is not
-// already in the stored snapshot are fetched -- normally none.
-func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) ([]alertDetail, error) {
+// already in the stored snapshot, and not already known to be over, are
+// fetched -- normally none.
+func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
+	ids = uniqueIDs(ids)
 	if len(ids) == 0 {
-		return nil, nil
+		return alertLookup{}, nil
 	}
 
 	stored, err := a.loadForecast(ctx)
 	if err != nil {
-		return nil, err
+		return alertLookup{}, fmt.Errorf("%w: %v", errAlertCacheUnreadable, err)
 	}
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
 		known[alert.ID] = alert
+	}
+	wasEnded := make(map[string]bool, len(stored.EndedAlertIDs))
+	for _, id := range stored.EndedAlertIDs {
+		wasEnded[id] = true
 	}
 
 	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
@@ -283,11 +310,18 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	alertCtx, cancel := context.WithDeadline(ctx, budgetEnd)
 	defer cancel()
 
+	var result alertLookup
 	var resolved []alertDetail
 	var unknown []string
-	for _, id := range uniqueIDs(ids) {
-		if alert, ok := known[id]; ok {
+	for _, id := range ids {
+		// A cached text past its end is fetched again rather than taken as
+		// over: the issuer may have extended the alert under the same ID.
+		if alert, ok := known[id]; ok && !alertOver(alert, now) {
 			resolved = append(resolved, alert)
+			continue
+		}
+		if wasEnded[id] {
+			result.ended = append(result.ended, id)
 			continue
 		}
 		unknown = append(unknown, id)
@@ -301,26 +335,46 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// A lookup only starts if it can wait out the full HTTP timeout before the
 	// budget ends; one cut off part-way may still have been billed and would
 	// leave nothing to store.
-	deadline, _ := alertCtx.Deadline()
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
-		if time.Until(deadline) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+		if time.Until(budgetEnd) < httpTimeout {
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
+			result.unfetched += len(order) - i
 			break
 		}
+		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			result.unfetched++
+			continue
+		}
+		if alertOver(alert, now) {
+			result.ended = append(result.ended, id)
 			continue
 		}
 		resolved = append(resolved, alert)
 	}
 
-	merged := mergeAlerts(nil, resolved, now)
+	result.alerts = mergeAlerts(nil, resolved, now)
+	sort.Strings(result.ended)
+
 	if len(failures) > 0 {
-		return merged, errors.New(strings.Join(failures, "; "))
+		return result, errors.New(strings.Join(failures, "; "))
 	}
-	return merged, nil
+	return result, nil
+}
+
+// errAlertCacheUnreadable means the stored snapshot, which holds the alert
+// texts already paid for and the IDs known to be over, could not be read.
+// Carrying on would count those alerts wrongly and overwrite the snapshot
+// without them, so the run stops instead.
+var errAlertCacheUnreadable = errors.New("read stored alerts")
+
+// alertOver reports whether an alert's announced end has passed, the same
+// test mergeAlerts uses to drop it.
+func alertOver(alert alertDetail, now time.Time) bool {
+	return alert.End > 0 && time.Unix(alert.End, 0).Before(now)
 }
 
 // uniqueIDs drops empty and repeated IDs, keeping the order they came in.

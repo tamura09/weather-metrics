@@ -42,7 +42,8 @@ The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its 
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
-stored snapshot, which on a day with no weather warnings is none of them. If
+stored snapshot and that are not already known to be over (`ended_alert_ids`,
+kept while `/current` still lists them), which on a day with no weather warnings is none of them. If
 an alert cannot be decoded it is never stored, so it is fetched again on later
 runs while it is still in force; a `decode alert` line in the logs means calls
 are being spent that way. Lookups of unknown IDs share a three-minute budget
@@ -204,9 +205,26 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
+
+`alerts_active` in the snapshot is the number of alerts taken to be in force:
+those in `alerts` plus any ID `/current` reported whose text could not be
+fetched that run, so `weather_alerts_active` and the `?resource=summary` count
+can exceed the rows of `?resource=alerts` and the `weather_alert` series. An ID
+is left out of the count only when text fetched for it says its announced end
+has passed; such IDs go into `ended_alert_ids` while `/current` keeps listing
+them, so they are neither fetched nor counted again. An ID whose text could not
+be fetched is counted even if it has in fact ended, since nothing says so yet.
+A cached text that has passed its end is fetched again before the ID is taken
+as over, in case the alert was extended. Unfetched texts are tried again on a
+later run, and such an alert is not written to `alerts/` until its text has
+been fetched: its record starts, and `first_seen` is set, on the first run that
+got the text, and an alert lifted before then never appears in the history.
+If the stored snapshot cannot be read, the run stops before writing a new one,
+so the cached texts and `ended_alert_ids` are not lost. Snapshots written
+before `alerts_active` existed fall back to the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just
 the ones in force, and OpenWeather has no way to ask for old ones. Each run

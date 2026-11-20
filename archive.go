@@ -117,6 +117,24 @@ type forecastSnapshot struct {
 	Hourly         []hourRecord  `json:"hourly"`
 	Daily          []dayRecord   `json:"daily"`
 	Alerts         []alertDetail `json:"alerts"`
+	// AlertsActive is how many alerts are in force: those in Alerts plus the
+	// IDs /current reported whose text could not be fetched this run. An
+	// alert already past its end is in neither. Snapshots written before it
+	// existed read as zero.
+	AlertsActive int `json:"alerts_active,omitempty"`
+	// EndedAlertIDs are IDs /current still lists although their text says the
+	// alert is over. Kept only while /current lists them, so they are neither
+	// fetched nor counted again.
+	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
+}
+
+// activeAlerts is the number of alerts in force, whether or not their text
+// was fetched.
+func (s forecastSnapshot) activeAlerts() int {
+	if s.AlertsActive > len(s.Alerts) {
+		return s.AlertsActive
+	}
+	return len(s.Alerts)
 }
 
 type hourRecord struct {
@@ -335,7 +353,7 @@ func mergeAlerts(existing, incoming []alertDetail, now time.Time) []alertDetail 
 
 	merged := make([]alertDetail, 0, len(byID))
 	for _, alert := range byID {
-		if alert.End > 0 && time.Unix(alert.End, 0).Before(now) {
+		if alertOver(alert, now) {
 			continue
 		}
 		merged = append(merged, alert)
