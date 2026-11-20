@@ -219,27 +219,19 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		AlertsActive:   len(alerts) + lookup.unfetched,
 		EndedAlertIDs:  lookup.ended,
 	}
-	save := true
-	if lookup.keepStored {
-		// The earlier read failed, so the stored alert cache was not used.
-		// Try once more and carry it over, so this run's forecast is saved
-		// without losing texts and ended IDs it could not see.
-		if stored, err := a.loadForecast(ctx); err == nil {
-			snapshot.Alerts, snapshot.EndedAlertIDs, snapshot.AlertsActive = carryAlertCache(stored, snapshot, uniqueIDs(present.Alerts), now)
-		} else if errors.Is(err, errUndecodable) {
-			// Readable this time but corrupt: replace it, as a run that found
-			// it corrupt on the first read would.
-			log.Printf("forecast snapshot is corrupt, replacing it: %v", err)
-		} else {
-			save = false
-			log.Printf("forecast snapshot left as it was, since it could not be read this run: %v", err)
-		}
-	}
 	// The history is for the dashboard's record of past warnings; losing one
-	// run's entry costs a fifteen-minute gap at worst, not the reading. It is
-	// written after any cache carried over above, so restored texts count too.
+	// run's entry costs a fifteen-minute gap at worst, not the reading.
 	if err := a.archiveAlerts(ctx, snapshot.Alerts, now); err != nil {
 		log.Printf("archive alerts: %v", err)
+	}
+	// keepStored: the stored snapshot could not be read even on a second try,
+	// so this run's alert cache was built without it. Leave the stored one in
+	// place and send no alert series rather than a count that may revive an
+	// alert already known to be over.
+	save := !lookup.keepStored
+	snapshot.alertsUnknown = lookup.keepStored
+	if !save {
+		log.Printf("forecast snapshot left as it was and alert series not sent, since it could not be read this run")
 	}
 	hoursStored := 0
 	if save {
@@ -304,14 +296,20 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return alertLookup{}, nil
 	}
 
-	// An unreadable snapshot is treated as empty rather than stopping the
-	// run, which would leave the dashboard without metrics for as long as the
-	// alert lasts; its texts are fetched again within the budget. A corrupt
-	// one is then replaced by this run's save, the only thing that rewrites
-	// it. One that could not be read (a transient S3 error) is still intact,
-	// so the run does not overwrite it: an ended alert whose re-fetch fails
-	// would otherwise lose its place in ended_alert_ids for good.
+	// A read that fails outright (a transient S3 error) is tried once more
+	// before any lookup, so a passing glitch costs no billed calls. If the
+	// snapshot is still unreadable it is treated as empty rather than
+	// stopping the run, which would leave the dashboard without metrics for
+	// as long as the alert lasts; its texts are fetched again within the
+	// budget. A corrupt one is then replaced by this run's save, the only
+	// thing that rewrites it. One that could not be read is still intact, so
+	// the run neither overwrites it nor reports an alert count built without
+	// its cache (keepStored).
 	stored, err := a.loadForecast(ctx)
+	if err != nil && !errors.Is(err, errUndecodable) {
+		log.Printf("read stored alerts, trying once more: %v", err)
+		stored, err = a.loadForecast(ctx)
+	}
 	if err != nil {
 		log.Printf("read stored alerts, fetching them again: %v", err)
 		result, lookupErr := lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
@@ -428,57 +426,6 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 // the first fifteen-minute slot) that re-checks IDs already confirmed over.
 func endedRecheckDue(now time.Time) bool {
 	return (now.Unix()/(15*60))%4 == 0
-}
-
-// carryAlertCache merges the alert cache of a snapshot this run could not
-// read at first into the one it built, for the IDs /current reports now
-// (ids). What the run itself decided wins: for an ID the run left without
-// text, a stored text still in force is taken, as is a stored ended ID. IDs /current no longer
-// reports are dropped. The returned count is alerts plus IDs still without
-// text, as AlertsActive.
-func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time) ([]alertDetail, []string, int) {
-	current := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		current[id] = true
-	}
-	decided := make(map[string]bool)
-	for _, alert := range built.Alerts {
-		decided[alert.ID] = true
-	}
-	for _, id := range built.EndedAlertIDs {
-		decided[id] = true
-	}
-
-	alerts := append([]alertDetail{}, built.Alerts...)
-	ended := append([]string{}, built.EndedAlertIDs...)
-	for _, alert := range stored.Alerts {
-		if !current[alert.ID] || decided[alert.ID] {
-			continue
-		}
-		// A cached text past its end that the run could not re-check is left
-		// undecided, so the ID is counted and re-checked on the next run.
-		if alertOver(alert, now) {
-			continue
-		}
-		alerts = append(alerts, alert)
-		decided[alert.ID] = true
-	}
-	for _, id := range stored.EndedAlertIDs {
-		if current[id] && !decided[id] {
-			ended = append(ended, id)
-			decided[id] = true
-		}
-	}
-	alerts = mergeAlerts(nil, alerts, now)
-	sort.Strings(ended)
-
-	withoutText := 0
-	for id := range current {
-		if !decided[id] {
-			withoutText++
-		}
-	}
-	return alerts, ended, len(alerts) + withoutText
 }
 
 // alertOver reports whether an alert's announced end has passed, the same

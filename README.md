@@ -44,7 +44,8 @@ draws on a separate quota.
 `/alert/{id}` is only called for alert IDs whose text is not already in the
 stored snapshot, or whose cached text is past its end (to catch an
 extension), and that are not already known to be over (`ended_alert_ids`,
-kept while `/current` still lists them). On a day with no weather warnings
+kept while `/current` still lists them) -- except that IDs known to be over
+are re-checked once an hour. On a day with no weather warnings
 that is none of them. If an alert cannot be decoded it is never stored, so it
 is fetched again on later runs while it is still in force; a `decode alert`
 line in the logs means calls are being spent that way. All these lookups share
@@ -229,13 +230,14 @@ been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
 An ID in `ended_alert_ids` is fetched again only once an hour while
 `/current` lists it, to save calls, so an alert extended under the same ID
-after being found over is picked up within an hour. A re-check that fails
-(other than 404/410) or does not fit the budget leaves the ID ended. If the stored snapshot cannot be
+after being found over is picked up by the first hourly re-check that fetches
+it successfully. A re-check that fails (other than 404/410) or does not fit the
+budget leaves the ID ended until the next hour's. If the stored snapshot cannot be
 read, the run treats it as empty and carries on, fetching the texts again
 within the budget. When the object could not be read at all (a transient S3
-error), the run reads it once more before saving and carries its cached texts
-and `ended_alert_ids` into the new snapshot; if that read fails too, the
-snapshot, forecast included, is left as it was for that run. When it is corrupt, the run's save
+error), the run reads it once more before any lookup; if that read fails too,
+the run does not write the snapshot, forecast included, and sends no alert
+series, rather than report a count built without the cache. When it is corrupt, the run's save
 replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
 fails is counted as active, and tried again on later runs, until a fetched
 text shows it is over or `/current` drops it. Snapshots written
@@ -259,12 +261,12 @@ Daily records are keyed on the date, and a record that has settled is never
 replaced by a forecast for the same date — which is what lets a backfill walk
 forward past today without undoing history.
 
-`forecast.json` is rewritten on every run, except that the alert cache --
-`alerts` texts, `ended_alert_ids`, and the `alerts_active` count derived from
-them -- is carried across runs because re-fetching costs billed calls. If the
-snapshot cannot be read on either of a run's two attempts, that run does not
-write it at all, so the hourly and daily forecast stay as the previous run
-left them until the next run.
+`forecast.json` is rewritten on every run, with the alert cache -- `alerts`
+texts and `ended_alert_ids` -- read from the previous one and carried forward,
+because re-fetching costs billed calls. If the snapshot cannot be read on
+either of a run's two attempts, that run does not write it at all, so the
+hourly and daily forecast stay as the previous run left them until the next
+run.
 
 ## Retention: two weeks dense, hourly for good
 

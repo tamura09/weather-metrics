@@ -130,6 +130,9 @@ type forecastSnapshot struct {
 	// only in the hourly re-check (endedRecheckDue), a failed re-check
 	// leaving them here.
 	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
+	// alertsUnknown is set, for this run only, when the alert cache could not
+	// be read, so the alert series are left out of the push.
+	alertsUnknown bool
 }
 
 // activeAlerts is the number of alerts in force, whether or not their text

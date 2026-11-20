@@ -92,7 +92,9 @@ func buildTimeSeries(location string, reading observation, snapshot forecastSnap
 	series = append(series, airSeries(base, reading, timestamp)...)
 	series = append(series, todaySeries(base, snapshot, month, zone, now, timestamp)...)
 	series = append(series, trendSeries(base, month, now, timestamp)...)
-	series = append(series, alertSeries(base, snapshot.activeAlerts(), snapshot.Alerts, timestamp)...)
+	if !snapshot.alertsUnknown {
+		series = append(series, alertSeries(base, snapshot.activeAlerts(), snapshot.Alerts, timestamp)...)
+	}
 
 	return series
 }
