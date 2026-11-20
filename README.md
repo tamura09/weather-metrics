@@ -58,16 +58,17 @@ with several of them a given one is fetched only when its turn comes within
 the budget. How an alert without text is counted and archived is described with
 the archive layout under [The archive](#the-archive) below.
 
-A failed run spends calls too: `/current` has already been paid for by the
-time `/timeline/1day` fails. The daily timeline often takes more than 20
-seconds to answer, so the HTTP timeout is 60 seconds, and the function is
-invoked with no asynchronous retries
+The daily timeline stalls for a minute or more around OpenWeather's
+three-hourly updates: from 2026-11-17 runs in the hours starting 00, 03, 06,
+... UTC regularly waited past even a 60-second timeout, while the rest of the
+day it answers in a second or two. A run therefore archives its observation
+from `/current` before asking for either timeline, and a timeline that fails
+is not fatal: the previous run's daily or hourly forecast (from the current
+day or hour on) stands in, and the reading is still pushed. The HTTP timeout
+is 60 seconds, and the function is invoked with no asynchronous retries
 (`aws_lambda_function_event_invoke_config.weather_metrics` in
-`tamura09/terraform`): a retry would pay for
-`/current` again. Because `/timeline/1day` fails before the observation is
-saved, that run's observation stays missing; the next scheduled run fifteen
-minutes later picks up with the conditions at that time. (A run that fails
-later, say on the Grafana push, has already archived its observation.)
+`tamura09/terraform`): a retry would pay for `/current` again, and the next
+scheduled run fifteen minutes later fetches the timelines anew.
 
 For JMA warnings `/alert/{id}` returns an empty `event`, the description as a
 list of translations (also empty), and English `tags` such as `Wind`. The kind
@@ -209,7 +210,7 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "hourly_updated_at": ..., "daily": [...], "daily_updated_at": ..., "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
 
@@ -240,8 +241,10 @@ calls a day per location; with the scheduled runs at 864 of the 1,000 free
 calls, about 17 such ID-days fit, and an hourly re-check (24 a day each) would
 spill into paid calls with six. If the stored snapshot cannot be
 read at all (a transient S3 error), the run reads it once more; if that fails
-too, the run makes no alert lookups, does not write the snapshot, forecast
-included, and sends no alert series, leaving the alerts to the next run; until
+too and `/current` listed alert IDs, the run makes no alert lookups, does not
+write the snapshot, forecast included, and sends no alert series, leaving the
+alerts to the next run (with no alert IDs it sends a count of 0, and saves as
+usual if both timelines were fetched); until
 then `?resource=summary` and `?resource=alerts` show the previous run's
 alerts (and if the snapshot still cannot be read when they are requested,
 they fail with HTTP 500). If it
@@ -271,10 +274,18 @@ forward past today without undoing history.
 
 `forecast.json` is rewritten on every run, with the alert cache -- `alerts`
 texts and `ended_alert_ids` -- read from the previous one and carried forward,
-because re-fetching costs billed calls. If the snapshot cannot be read on
-either of a run's two attempts, that run does not write it at all, so the
-hourly and daily forecast stay as the previous run left them until the next
-run.
+because re-fetching costs billed calls. When a run's daily or hourly timeline
+fails, the previous run's copy of that forecast is carried forward too;
+`daily_updated_at` and `hourly_updated_at` say when each was last actually
+fetched, so a forecast older than `updated_at` shows as such (the collect
+result also reports `daily_fetched` and `hourly_fetched`). Each run reads the
+previous snapshot once (retrying once on an S3 error) for both purposes. If it
+still cannot be read and the run needed it -- `/current` listed alert IDs, or
+a timeline failed -- that run makes no alert lookups and does not write the
+snapshot at all, so the forecast and alert cache stay as the previous run left
+them until the next run (a run with no alerts and both timelines fetched saves
+as usual); a corrupt snapshot is instead started afresh and
+replaced.
 
 ## Retention: two weeks dense, hourly for good
 
@@ -374,7 +385,7 @@ Every query also takes `location=<location ID>`, which is required when
 | Query | Returns |
 | --- | --- |
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
-| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, `alerts_active`, and `data_lag_seconds`. `alerts_active` comes from the stored forecast snapshot, so after a run that could not read (and so did not rewrite) it, the count is the previous run's until the next run. |
+| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, `alerts_active`, and `data_lag_seconds`. `alerts_active` comes from the stored forecast snapshot, so after a run that skipped saving it (see the archive section), the count is the previous run's until the next run. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
 | `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour within the last two weeks, 1 for older hours, which are thinned). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |

@@ -34,11 +34,12 @@ const (
 	dailyLookbackDays = 2
 
 	// One Call 4.0's daily timeline regularly takes longer than 20 seconds to
-	// send its headers, around the quarter hours when all three locations ask
-	// at once. The /current call made before it is already billed, and the
-	// timed-out request may be too, so cutting it short wastes calls against
-	// the 1,000-a-day allowance and loses that run's observation. The function's
-	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
+	// send its headers, and stalls past a minute around OpenWeather's
+	// three-hourly updates. A timed-out request may still be billed, so
+	// cutting a slow one short wastes calls against the 1,000-a-day
+	// allowance; a stalled one fails anyway, and the run carries on with the
+	// previous forecast. The function's own timeout is 15 minutes, so waiting
+	// longer costs only Lambda time.
 	httpTimeout = 60 * time.Second
 
 	// Total time a run may spend on /alert/{id} calls of every kind: new IDs,
@@ -174,15 +175,6 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	}
 	present := current.Data[0]
 
-	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
-	if err != nil {
-		return nil, fmt.Errorf("read daily timeline: %w", err)
-	}
-	hours, err := weather.hours(ctx, now.Unix())
-	if err != nil {
-		return nil, fmt.Errorf("read hourly timeline: %w", err)
-	}
-
 	// Air quality is a separate 2.5 endpoint on its own quota, and a nice-to-
 	// have next to the temperature the dashboard exists for. A failure here
 	// should not cost us the reading we came for.
@@ -191,6 +183,10 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		log.Printf("air pollution: %v", err)
 	}
 
+	// The reading is archived before the timelines are asked for. The daily
+	// timeline in particular stalls for a minute or more around OpenWeather's
+	// three-hourly updates (00, 03, ... UTC), and a run that stopped there
+	// used to lose the reading it had already paid for.
 	reading := buildObservation(present, air, now)
 	if err := a.archiveObservation(ctx, reading, now); err != nil {
 		return nil, fmt.Errorf("archive observation: %w", err)
@@ -201,43 +197,95 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		log.Printf("thin earlier observations: %v", err)
 	}
 
-	dayRecords := buildDays(days.Data, a.zone, now)
-	if err := a.archiveDays(ctx, dayRecords); err != nil {
-		return nil, fmt.Errorf("archive daily timeline: %w", err)
+	// The stored snapshot is read once, and serves both the alert cache and
+	// the stand-in for a failed timeline. If it cannot be read (see
+	// readStoredForecast) and the run needed it, the run neither saves a new
+	// one -- that would overwrite a good forecast and alert cache with what
+	// this run alone saw -- nor makes alert lookups whose results could not be
+	// kept. A run with no alerts and both timelines fetched saves as usual.
+	stored, storedUnreadable := a.readStoredForecast(ctx)
+
+	// A timeline that fails is not fatal either: the forecast changes slowly,
+	// so the previous run's copy stands in until the next run, and the
+	// reading still gets pushed.
+
+	var dayRecords, dailyForecast []dayRecord
+	dailyUpdatedAt := now.UTC()
+	// A response with no usable rows (none, or none from today on once
+	// converted) counts as a failure too, so it cannot wipe a good forecast.
+	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
+	if err == nil {
+		dayRecords = buildDays(days.Data, a.zone, now)
+		if dailyForecast = forecastDays(dayRecords, now, a.zone); len(dailyForecast) == 0 {
+			err = errors.New("daily timeline had no days from today on")
+		}
+	}
+	// Whatever days did come back are archived even if none is from today
+	// on, so a settled day is not lost; only the forecast falls back.
+	if len(dayRecords) > 0 {
+		if err := a.archiveDays(ctx, dayRecords); err != nil {
+			return nil, fmt.Errorf("archive daily timeline: %w", err)
+		}
+	}
+	if err != nil {
+		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
+		dailyForecast = forecastDays(stored.Daily, now, a.zone)
+		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, len(stored.Daily) > 0, stored)
 	}
 
-	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	var hourly []hourRecord
+	hourlyUpdatedAt := now.UTC()
+	hours, err := weather.hours(ctx, now.Unix())
+	if err == nil {
+		if hourly = upcomingHours(buildHours(hours.Data), now); len(hourly) == 0 {
+			err = errors.New("hourly timeline had no hours from the current one on")
+		}
+	}
+	if err != nil {
+		log.Printf("read hourly timeline, keeping the previous forecast: %v", err)
+		hourly = upcomingHours(stored.Hourly, now)
+		hourlyUpdatedAt = fetchedAt(stored.HourlyUpdatedAt, len(stored.Hourly) > 0, stored)
+	}
+
+	lookup, err := resolveAlerts(ctx, weather, present.Alerts, stored, storedUnreadable, now)
 	alerts := lookup.alerts
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
 		// of the snapshot is stored without it -- unless the stored snapshot
-		// could not be read at all (keepStored), when nothing is stored.
+		// could not be read at all (storedUnreadable), when nothing is stored.
 		log.Printf("resolve alerts: %v", err)
 	}
 	snapshot := forecastSnapshot{
-		UpdatedAt:      now.UTC(),
-		Timezone:       current.Timezone,
-		TimezoneOffset: current.TimezoneOffset,
-		Hourly:         buildHours(hours.Data),
-		Daily:          forecastDays(dayRecords, now, a.zone),
-		Alerts:         alerts,
-		AlertsActive:   len(alerts) + lookup.unfetched,
-		EndedAlertIDs:  lookup.ended,
+		UpdatedAt:       now.UTC(),
+		Timezone:        current.Timezone,
+		TimezoneOffset:  current.TimezoneOffset,
+		Hourly:          hourly,
+		Daily:           dailyForecast,
+		HourlyUpdatedAt: hourlyUpdatedAt,
+		DailyUpdatedAt:  dailyUpdatedAt,
+		Alerts:          alerts,
+		AlertsActive:    len(alerts) + lookup.unfetched,
+		EndedAlertIDs:   lookup.ended,
 	}
 	// The history is for the dashboard's record of past warnings; losing one
 	// run's entry costs a fifteen-minute gap at worst, not the reading.
 	if err := a.archiveAlerts(ctx, snapshot.Alerts, now); err != nil {
 		log.Printf("archive alerts: %v", err)
 	}
-	// keepStored: the stored snapshot could not be read even on a second try,
-	// so this run's alert cache was built without it. Leave the stored one in
-	// place and send no alert series rather than a count that may revive an
-	// alert already known to be over.
-	save := !lookup.keepStored
-	snapshot.alertsUnknown = lookup.keepStored
+	// The stored snapshot could not be read even on a second try, so this
+	// run's alert cache and any stand-in forecast were built without it.
+	// Leave the stored one in place and send no alert series rather than a
+	// count that may revive an alert already known to be over.
+	// Only when the stored copy was actually needed: alert IDs to resolve
+	// against the cache, or a timeline that fell back on it. Otherwise this
+	// run fetched everything it saves, and the alert count is known.
+	hasAlerts := len(uniqueIDs(present.Alerts)) > 0
+	usedStored := hasAlerts || !dailyUpdatedAt.Equal(now.UTC()) || !hourlyUpdatedAt.Equal(now.UTC())
+	save := !(storedUnreadable && usedStored)
+	snapshot.alertsUnknown = storedUnreadable && hasAlerts
 	if !save {
-		log.Printf("forecast snapshot left as it was and alert series not sent, since it could not be read this run")
+		log.Printf("forecast snapshot left as it was, since it could not be read this run")
 	}
 	hoursStored := 0
 	if save {
@@ -267,11 +315,14 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		alertsActive = nil
 	}
 	return map[string]any{
-		"location":       a.location,
-		"observed_at":    reading.Time,
-		"temp":           reading.Temp,
-		"days_archived":  len(dayRecords),
-		"hours_stored":   hoursStored,
+		"location":      a.location,
+		"observed_at":   reading.Time,
+		"temp":          reading.Temp,
+		"days_archived": len(dayRecords),
+		"hours_stored":  hoursStored,
+		// Whether this run fetched each timeline or kept the previous copy.
+		"daily_fetched":  dailyUpdatedAt.Equal(now.UTC()),
+		"hourly_fetched": hourlyUpdatedAt.Equal(now.UTC()),
 		"alerts_active":  alertsActive,
 		"series_pushed":  pushed,
 		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
@@ -292,10 +343,6 @@ type alertLookup struct {
 	// counted in unfetched and tried again on the next run.
 	ended []string
 	calls int // /alert/{id} requests sent, failed ones included
-	// keepStored is set when the stored snapshot could not be read for a
-	// reason other than corruption. Its cached texts and ended IDs are still
-	// there, so this run must not overwrite them with what it rebuilt.
-	keepStored bool
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
@@ -304,40 +351,42 @@ type alertLookup struct {
 // passed its end (re-checked for an extension), and, on the three-hourly
 // re-check runs (endedRecheckDue), IDs already confirmed over that /current
 // still lists -- normally none.
-func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
+func resolveAlerts(ctx context.Context, weather *openWeather, ids []string, stored forecastSnapshot, storedUnreadable bool, now time.Time) (alertLookup, error) {
 	ids = uniqueIDs(ids)
 	if len(ids) == 0 {
 		return alertLookup{}, nil
 	}
+	if storedUnreadable {
+		// Nothing fetched now could be saved or sent, so no lookups are made.
+		return alertLookup{}, errors.New("stored alerts unreadable, leaving the alerts to the next run")
+	}
+	return lookupAlerts(ctx, weather, ids, stored, now)
+}
 
-	// A read that fails outright (a transient S3 error) is tried once more
-	// before any lookup, so a passing glitch costs no billed calls. Neither
-	// case below stops the run, which would leave the dashboard without
-	// metrics for as long as the alert lasts. A corrupt snapshot is treated as
-	// empty: its texts are fetched again within the budget and this run's
-	// save, the only thing that rewrites it, replaces it. One that still
-	// could not be read is intact in S3, so the run makes no lookups, does not
-	// overwrite it and sends no alert series (keepStored), leaving the alerts
-	// to the next run.
+// readStoredForecast reads the previous snapshot. A read that fails outright
+// (a transient S3 error) is tried once more, bounded so a hanging retry
+// cannot eat the time the rest of the run needs. A corrupt snapshot is
+// treated as empty: there is nothing good in it to lose, its alert texts are
+// fetched again within the budget, and this run's save, the only thing that
+// rewrites it, replaces it. One that still could not be read is intact in S3,
+// which unreadable reports, so the run leaves it alone.
+func (a *app) readStoredForecast(ctx context.Context) (stored forecastSnapshot, unreadable bool) {
 	stored, err := a.loadForecast(ctx)
 	if err != nil && !errors.Is(err, errUndecodable) {
-		log.Printf("read stored alerts, trying once more: %v", err)
-		// Bounded, so a hanging retry cannot eat the time the rest of the
-		// run (the month read, the push) needs.
+		log.Printf("read stored forecast, trying once more: %v", err)
 		retryCtx, cancel := context.WithTimeout(ctx, snapshotRetryTimeout)
 		stored, err = a.loadForecast(retryCtx)
 		cancel()
 	}
 	if errors.Is(err, errUndecodable) {
-		log.Printf("stored alerts are corrupt, fetching them again: %v", err)
-		return lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
+		log.Printf("stored forecast is corrupt, starting it afresh: %v", err)
+		return forecastSnapshot{}, false
 	}
 	if err != nil {
-		// Nothing fetched now could be saved or sent (see keepStored), so no
-		// lookups are made.
-		return alertLookup{keepStored: true}, fmt.Errorf("read stored alerts: %w", err)
+		log.Printf("stored forecast unreadable, leaving it as it was: %v", err)
+		return forecastSnapshot{}, true
 	}
-	return lookupAlerts(ctx, weather, ids, stored, now)
+	return stored, false
 }
 
 // lookupAlerts is resolveAlerts after the snapshot has been read: it sorts
@@ -648,6 +697,30 @@ func forecastDays(days []dayRecord, now time.Time, zone *time.Location) []dayRec
 		forward = append(forward, day)
 	}
 	return forward
+}
+
+// fetchedAt is when a carried-over forecast was fetched: its own timestamp,
+// or for a snapshot written before those existed, the snapshot's updated_at,
+// when every part of it was fetched. A part with no records was never
+// fetched, so it gets no time.
+func fetchedAt(at time.Time, hasRecords bool, stored forecastSnapshot) time.Time {
+	if at.IsZero() && hasRecords {
+		return stored.UpdatedAt
+	}
+	return at
+}
+
+// upcomingHours keeps the stored hourly forecast from the current hour on,
+// for a run whose own hourly timeline failed.
+func upcomingHours(hours []hourRecord, now time.Time) []hourRecord {
+	from := now.Truncate(time.Hour).UnixMilli()
+	upcoming := make([]hourRecord, 0, len(hours))
+	for _, hour := range hours {
+		if hour.Time >= from {
+			upcoming = append(upcoming, hour)
+		}
+	}
+	return upcoming
 }
 
 func buildHours(points []weatherPoint) []hourRecord {

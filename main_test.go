@@ -674,3 +674,30 @@ func TestRotationKeyGivesEveryIDAFrontTurnOnOrdinaryRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestUpcomingHoursKeepsTheCurrentHourOn(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 40, 0, 0, time.UTC)
+	hours := []hourRecord{
+		{Time: now.Add(-2 * time.Hour).Truncate(time.Hour).UnixMilli()},
+		{Time: now.Truncate(time.Hour).UnixMilli()},
+		{Time: now.Add(time.Hour).Truncate(time.Hour).UnixMilli()},
+	}
+	got := upcomingHours(hours, now)
+	if len(got) != 2 || got[0].Time != hours[1].Time {
+		t.Fatalf("upcomingHours = %v, want the 12:00 and 13:00 hours", got)
+	}
+}
+
+func TestFetchedAtFallsBackToUpdatedAtForOldSnapshots(t *testing.T) {
+	updated := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	daily := updated.Add(-time.Hour)
+	if got := fetchedAt(time.Time{}, true, forecastSnapshot{UpdatedAt: updated}); !got.Equal(updated) {
+		t.Errorf("old snapshot: fetchedAt = %v, want updated_at %v", got, updated)
+	}
+	if got := fetchedAt(daily, true, forecastSnapshot{UpdatedAt: updated}); !got.Equal(daily) {
+		t.Errorf("new snapshot: fetchedAt = %v, want %v", got, daily)
+	}
+	if got := fetchedAt(time.Time{}, false, forecastSnapshot{UpdatedAt: updated}); !got.IsZero() {
+		t.Errorf("never fetched: fetchedAt = %v, want zero", got)
+	}
+}
