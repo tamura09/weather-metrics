@@ -240,9 +240,9 @@ spill into paid calls with six. If the stored snapshot cannot be
 read at all (a transient S3 error), the run reads it once more; if that fails
 too, the run makes no alert lookups, does not write the snapshot, forecast
 included, and sends no alert series, leaving the alerts to the next run; until
-then `?resource=summary` gives `alerts_active` as `null` (and if the snapshot
-still cannot be read when the summary is requested, the whole summary fails
-with HTTP 500). If it
+then `?resource=summary` and `?resource=alerts` show the previous run's
+alerts (and if the snapshot still cannot be read when they are requested,
+they fail with HTTP 500). If it
 is corrupt, the run treats it as empty, fetches the texts again within the
 budget, and its save replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
 fails is counted as active, and tried again on later runs, until a fetched
@@ -372,7 +372,7 @@ Every query also takes `location=<location ID>`, which is required when
 | Query | Returns |
 | --- | --- |
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
-| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, `alerts_active`, and `data_lag_seconds`. `alerts_active` is `null` when the forecast snapshot is more than half a schedule interval older than the latest reading -- a run saved its observation but could not read the snapshot, so did not rewrite it -- since the stored count may be stale. |
+| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, `alerts_active`, and `data_lag_seconds`. `alerts_active` comes from the stored forecast snapshot, so after a run that could not read (and so did not rewrite) it, the count is the previous run's until the next run. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
 | `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour within the last two weeks, 1 for older hours, which are thinned). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |

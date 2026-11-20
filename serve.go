@@ -449,21 +449,12 @@ type weatherSummaryRow struct {
 	Sunrise         int64    `json:"sunrise"`
 	Sunset          int64    `json:"sunset"`
 	Daylight        float64  `json:"daylight_seconds"`
-	// AlertsActive is null when the stored count predates the latest
-	// observation: a run saved the reading but could not read (and so did not
-	// rewrite) the forecast snapshot, and the count may be stale.
-	AlertsActive *int `json:"alerts_active"`
+	AlertsActive    int      `json:"alerts_active"`
 	// DataLagSeconds growing is how a stalled collector shows up: nothing new
 	// lands in the archive, whatever the reason, so no separate success flag is
 	// needed.
 	DataLagSeconds float64 `json:"data_lag_seconds"`
 }
-
-// staleAlertCountAfter is how far the latest reading may be ahead of the
-// snapshot's updated_at before the summary's alert count is treated as stale.
-// It is half the fifteen-minute schedule: more than clock skew within a run,
-// less than the gap to the previous run.
-const staleAlertCountAfter = 7*time.Minute + 30*time.Second
 
 func (a *app) servedSummary(ctx context.Context, now time.Time) (weatherSummaryRow, error) {
 	today := startOfDay(now, a.zone)
@@ -495,19 +486,12 @@ func (a *app) servedSummary(ctx context.Context, now time.Time) (weatherSummaryR
 // summarize touches no S3, so it can be tested directly against synthetic
 // readings and snapshots.
 func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Location, now time.Time) weatherSummaryRow {
-	active := snapshot.activeAlerts()
-	summary := weatherSummaryRow{AlertsActive: &active}
+	summary := weatherSummaryRow{AlertsActive: snapshot.activeAlerts()}
 	if len(readings) == 0 {
 		return summary
 	}
 
 	latest := readings[len(readings)-1]
-	// The run that writes both takes its clock before /current, and the
-	// reading carries OpenWeather's dt, which can be a little later; only a
-	// gap well beyond that means the snapshot is from an earlier run.
-	if !snapshot.UpdatedAt.IsZero() && latest.Time.Sub(snapshot.UpdatedAt) > staleAlertCountAfter {
-		summary.AlertsActive = nil
-	}
 	summary.Time = latest.Time.UnixMilli()
 	summary.ISO = latest.Time.In(zone).Format(time.RFC3339)
 	summary.Temp = latest.Temp
