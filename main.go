@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -201,8 +200,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
-	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
-	alerts := lookup.alerts
+	alerts, unfetchedAlerts, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
@@ -222,8 +220,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
-		AlertsActive:   len(alerts) + lookup.unfetched,
-		EndedAlertIDs:  lookup.ended,
+		AlertsActive:   len(alerts) + unfetchedAlerts,
 	}
 	if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
@@ -250,43 +247,27 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		"hours_stored":   len(snapshot.Hourly),
 		"alerts_active":  snapshot.activeAlerts(),
 		"series_pushed":  pushed,
-		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
+		"api_calls_made": 3, // current + one day page + one hour page
 	}, nil
-}
-
-// alertLookup is what resolveAlerts found for the IDs /current reported.
-type alertLookup struct {
-	alerts []alertDetail // in force, with text
-	// unfetched is how many IDs are presumably in force but have no text yet,
-	// because their lookup failed or did not fit in the budget.
-	unfetched int
-	// ended lists IDs /current still reports whose text says they are over.
-	// They are kept so later runs neither fetch nor count them again.
-	ended []string
-	calls int // /alert/{id} requests sent, failed ones included
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
 // 4.0 charges for /alert/{id} like any other call, so only IDs whose text is not
-// already in the stored snapshot, and not already known to be over, are
-// fetched -- normally none.
-func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
-	ids = uniqueIDs(ids)
+// already in the stored snapshot are fetched -- normally none. unfetched is
+// how many IDs are still in force but have no text yet, because their lookup
+// failed or did not fit in the budget.
+func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alerts []alertDetail, unfetched int, err error) {
 	if len(ids) == 0 {
-		return alertLookup{}, nil
+		return nil, 0, nil
 	}
 
 	stored, err := a.loadForecast(ctx)
 	if err != nil {
-		return alertLookup{unfetched: len(ids)}, err
+		return nil, len(uniqueIDs(ids)), err
 	}
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
 		known[alert.ID] = alert
-	}
-	wasEnded := make(map[string]bool, len(stored.EndedAlertIDs))
-	for _, id := range stored.EndedAlertIDs {
-		wasEnded[id] = true
 	}
 
 	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
@@ -305,16 +286,11 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	alertCtx, cancel := context.WithDeadline(ctx, budgetEnd)
 	defer cancel()
 
-	var result alertLookup
 	var resolved []alertDetail
 	var unknown []string
-	for _, id := range ids {
+	for _, id := range uniqueIDs(ids) {
 		if alert, ok := known[id]; ok {
 			resolved = append(resolved, alert)
-			continue
-		}
-		if wasEnded[id] {
-			result.ended = append(result.ended, id)
 			continue
 		}
 		unknown = append(unknown, id)
@@ -328,50 +304,28 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// A lookup only starts if it can wait out the full HTTP timeout before the
 	// budget ends; one cut off part-way may still have been billed and would
 	// leave nothing to store.
+	deadline, _ := alertCtx.Deadline()
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
-		if time.Until(budgetEnd) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
-			result.unfetched += len(order) - i
+		if time.Until(deadline) < httpTimeout {
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+			unfetched += len(order) - i
 			break
 		}
-		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-			result.unfetched++
-			continue
-		}
-		if alertOver(alert, now) {
-			result.ended = append(result.ended, id)
+			unfetched++
 			continue
 		}
 		resolved = append(resolved, alert)
 	}
 
-	// A stored alert can run past its end while /current keeps listing it.
-	result.alerts = mergeAlerts(nil, resolved, now)
-	kept := make(map[string]bool, len(result.alerts))
-	for _, alert := range result.alerts {
-		kept[alert.ID] = true
-	}
-	for _, alert := range resolved {
-		if !kept[alert.ID] {
-			result.ended = append(result.ended, alert.ID)
-		}
-	}
-	sort.Strings(result.ended)
-
+	merged := mergeAlerts(nil, resolved, now)
 	if len(failures) > 0 {
-		return result, errors.New(strings.Join(failures, "; "))
+		return merged, unfetched, errors.New(strings.Join(failures, "; "))
 	}
-	return result, nil
-}
-
-// alertOver reports whether an alert's announced end has passed, the same
-// test mergeAlerts uses to drop it.
-func alertOver(alert alertDetail, now time.Time) bool {
-	return alert.End > 0 && time.Unix(alert.End, 0).Before(now)
+	return merged, unfetched, nil
 }
 
 // uniqueIDs drops empty and repeated IDs, keeping the order they came in.
