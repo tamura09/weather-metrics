@@ -278,9 +278,11 @@ fails, the previous run's copy of that forecast is carried forward too;
 fetched, so a forecast older than `updated_at` shows as such (the collect
 result also reports `daily_fetched` and `hourly_fetched`). Each run reads the
 previous snapshot once (retrying once on an S3 error) for both purposes. If it
-still cannot be read, that run makes no alert lookups and does not write the
+still cannot be read and the run needed it -- `/current` listed alert IDs, or
+a timeline failed -- that run makes no alert lookups and does not write the
 snapshot at all, so the forecast and alert cache stay as the previous run left
-them until the next run; a corrupt snapshot is instead started afresh and
+them until the next run (a run with no alerts and both timelines fetched saves
+as usual); a corrupt snapshot is instead started afresh and
 replaced.
 
 ## Retention: two weeks dense, hourly for good

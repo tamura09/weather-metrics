@@ -199,9 +199,10 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 
 	// The stored snapshot is read once, and serves both the alert cache and
 	// the stand-in for a failed timeline. If it cannot be read (see
-	// readStoredForecast), the run neither saves a new one -- that would
-	// overwrite a good forecast and alert cache with what this run alone saw
-	// -- nor makes alert lookups whose results could not be kept.
+	// readStoredForecast) and the run needed it, the run neither saves a new
+	// one -- that would overwrite a good forecast and alert cache with what
+	// this run alone saw -- nor makes alert lookups whose results could not be
+	// kept. A run with no alerts and both timelines fetched saves as usual.
 	stored, storedUnreadable := a.readStoredForecast(ctx)
 
 	// A timeline that fails is not fatal either: the forecast changes slowly,
@@ -264,8 +265,13 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	// run's alert cache and any stand-in forecast were built without it.
 	// Leave the stored one in place and send no alert series rather than a
 	// count that may revive an alert already known to be over.
-	save := !storedUnreadable
-	snapshot.alertsUnknown = storedUnreadable
+	// Only when the stored copy was actually needed: alert IDs to resolve
+	// against the cache, or a timeline that fell back on it. Otherwise this
+	// run fetched everything it saves, and the alert count is known.
+	hasAlerts := len(uniqueIDs(present.Alerts)) > 0
+	usedStored := hasAlerts || !dailyUpdatedAt.Equal(now.UTC()) || !hourlyUpdatedAt.Equal(now.UTC())
+	save := !(storedUnreadable && usedStored)
+	snapshot.alertsUnknown = storedUnreadable && hasAlerts
 	if !save {
 		log.Printf("forecast snapshot left as it was, since it could not be read this run")
 	}
