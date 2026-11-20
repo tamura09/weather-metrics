@@ -285,7 +285,7 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 
 	var resolved []alertDetail
 	var unknown []string
-	for _, id := range ids {
+	for _, id := range uniqueIDs(ids) {
 		if alert, ok := known[id]; ok {
 			resolved = append(resolved, alert)
 			continue
@@ -305,7 +305,7 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
 		if time.Until(deadline) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("lookup budget of %s used up; %d alert(s) left for the next run", alertLookupBudget, len(order)-i))
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
 			break
 		}
 		alert, err := weather.alert(alertCtx, id)
@@ -321,6 +321,20 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return merged, errors.New(strings.Join(failures, "; "))
 	}
 	return merged, nil
+}
+
+// uniqueIDs drops empty and repeated IDs, keeping the order they came in.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; id == "" || dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique
 }
 
 // rotateIDs returns ids starting from an offset that advances once per

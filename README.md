@@ -47,7 +47,11 @@ an alert cannot be decoded it is never stored, so it is fetched again on later
 runs while it is still in force; a `decode alert` line in the logs means calls
 are being spent that way. Lookups of unknown IDs share a three-minute budget
 per run and start from a different ID each run, so with several unknown IDs a
-given one is fetched only when its turn comes within the budget.
+given one is fetched only when its turn comes within the budget. An alert
+whose text has not been fetched is left out of the snapshot, the alert count
+and `alerts/` until a run gets it: its history record starts, and
+`first_seen` is set, on that run, and an alert lifted before then never
+appears in the history.
 
 A failed run spends calls too: `/current` has already been paid for by the
 time `/timeline/1day` fails. The daily timeline often takes more than 20

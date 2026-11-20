@@ -608,3 +608,11 @@ func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 		t.Fatalf("input was modified: %v", ids)
 	}
 }
+
+func TestUniqueIDsDropsEmptyAndRepeatedKeepingOrder(t *testing.T) {
+	got := uniqueIDs([]string{"b", "", "a", "b", "a", "c"})
+	want := []string{"b", "a", "c"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("uniqueIDs = %v, want %v", got, want)
+	}
+}
