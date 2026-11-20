@@ -200,16 +200,9 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2 }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
-
-`alerts_active` in the snapshot is the number of distinct alert IDs `/current`
-reported, including any whose text could not be fetched that run, so
-`weather_alerts_active` and the `/summary` count can exceed the rows of
-`?resource=alerts` and the `weather_alert` series. Those texts are fetched
-again on a later run. Snapshots written before the field existed fall back to
-the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just
 the ones in force, and OpenWeather has no way to ask for old ones. Each run
