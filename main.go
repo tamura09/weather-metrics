@@ -50,6 +50,9 @@ const (
 	// and the Grafana push that follow them, the push allowed the full HTTP
 	// timeout.
 	afterAlertsReserve = httpTimeout + 30*time.Second
+
+	// How long the second read of an unreadable snapshot may take.
+	snapshotRetryTimeout = 20 * time.Second
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -319,7 +322,11 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	stored, err := a.loadForecast(ctx)
 	if err != nil && !errors.Is(err, errUndecodable) {
 		log.Printf("read stored alerts, trying once more: %v", err)
-		stored, err = a.loadForecast(ctx)
+		// Bounded, so a hanging retry cannot eat the time the rest of the
+		// run (the month read, the push) needs.
+		retryCtx, cancel := context.WithTimeout(ctx, snapshotRetryTimeout)
+		stored, err = a.loadForecast(retryCtx)
+		cancel()
 	}
 	if errors.Is(err, errUndecodable) {
 		log.Printf("stored alerts are corrupt, fetching them again: %v", err)
