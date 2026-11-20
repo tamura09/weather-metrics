@@ -42,7 +42,8 @@ The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its 
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
-stored snapshot, which on a day with no weather warnings is none of them. If
+stored snapshot and that are not already known to be over (`ended_alert_ids`,
+kept while `/current` still lists them), which on a day with no weather warnings is none of them. If
 an alert cannot be decoded it is never stored, so it is fetched again on later
 runs while it is still in force; a `decode alert` line in the logs means calls
 are being spent that way. Lookups of unknown IDs share a three-minute budget
@@ -200,7 +201,7 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2 }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
 

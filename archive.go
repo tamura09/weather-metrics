@@ -122,6 +122,10 @@ type forecastSnapshot struct {
 	// alert already past its end is in neither. Snapshots written before it
 	// existed read as zero.
 	AlertsActive int `json:"alerts_active,omitempty"`
+	// EndedAlertIDs are IDs /current still lists although their text says the
+	// alert is over. Kept only while /current lists them, so they are neither
+	// fetched nor counted again.
+	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
 }
 
 // activeAlerts is the number of alerts in force, whether or not their text
@@ -349,7 +353,7 @@ func mergeAlerts(existing, incoming []alertDetail, now time.Time) []alertDetail 
 
 	merged := make([]alertDetail, 0, len(byID))
 	for _, alert := range byID {
-		if alert.End > 0 && time.Unix(alert.End, 0).Before(now) {
+		if alertOver(alert, now) {
 			continue
 		}
 		merged = append(merged, alert)
