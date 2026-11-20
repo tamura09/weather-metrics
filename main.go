@@ -212,10 +212,13 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	var dayRecords, dailyForecast []dayRecord
 	dailyUpdatedAt := now.UTC()
 	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
+	if err == nil && len(days.Data) == 0 {
+		err = errors.New("daily timeline came back empty")
+	}
 	if err != nil {
 		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
 		dailyForecast = forecastDays(stored.Daily, now, a.zone)
-		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, stored)
+		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, len(stored.Daily) > 0, stored)
 	} else {
 		dayRecords = buildDays(days.Data, a.zone, now)
 		if err := a.archiveDays(ctx, dayRecords); err != nil {
@@ -227,10 +230,13 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	var hourly []hourRecord
 	hourlyUpdatedAt := now.UTC()
 	hours, err := weather.hours(ctx, now.Unix())
+	if err == nil && len(hours.Data) == 0 {
+		err = errors.New("hourly timeline came back empty")
+	}
 	if err != nil {
 		log.Printf("read hourly timeline, keeping the previous forecast: %v", err)
 		hourly = upcomingHours(stored.Hourly, now)
-		hourlyUpdatedAt = fetchedAt(stored.HourlyUpdatedAt, stored)
+		hourlyUpdatedAt = fetchedAt(stored.HourlyUpdatedAt, len(stored.Hourly) > 0, stored)
 	} else {
 		hourly = buildHours(hours.Data)
 	}
@@ -689,9 +695,10 @@ func forecastDays(days []dayRecord, now time.Time, zone *time.Location) []dayRec
 
 // fetchedAt is when a carried-over forecast was fetched: its own timestamp,
 // or for a snapshot written before those existed, the snapshot's updated_at,
-// when every part of it was fetched.
-func fetchedAt(at time.Time, stored forecastSnapshot) time.Time {
-	if at.IsZero() {
+// when every part of it was fetched. A part with no records was never
+// fetched, so it gets no time.
+func fetchedAt(at time.Time, hasRecords bool, stored forecastSnapshot) time.Time {
+	if at.IsZero() && hasRecords {
 		return stored.UpdatedAt
 	}
 	return at

@@ -241,8 +241,10 @@ calls a day per location; with the scheduled runs at 864 of the 1,000 free
 calls, about 17 such ID-days fit, and an hourly re-check (24 a day each) would
 spill into paid calls with six. If the stored snapshot cannot be
 read at all (a transient S3 error), the run reads it once more; if that fails
-too, the run makes no alert lookups, does not write the snapshot, forecast
-included, and sends no alert series, leaving the alerts to the next run; until
+too and `/current` listed alert IDs, the run makes no alert lookups, does not
+write the snapshot, forecast included, and sends no alert series, leaving the
+alerts to the next run (with no alert IDs it sends a count of 0, and saves as
+usual if both timelines were fetched); until
 then `?resource=summary` and `?resource=alerts` show the previous run's
 alerts (and if the snapshot still cannot be read when they are requested,
 they fail with HTTP 500). If it
