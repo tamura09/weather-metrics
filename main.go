@@ -286,9 +286,13 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// Starting from a different ID each fifteen-minute slot gives every one
 	// its turn at the front without keeping any state between runs.
 	var failures []string
+	// A lookup only starts if it can wait out the full HTTP timeout before the
+	// budget ends; one cut off part-way may still have been billed and would
+	// leave nothing to store.
+	deadline, _ := alertCtx.Deadline()
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
-		if alertCtx.Err() != nil {
+		if time.Until(deadline) < httpTimeout {
 			failures = append(failures, fmt.Sprintf("lookup budget of %s used up; %d alert(s) left for the next run", alertLookupBudget, len(order)-i))
 			break
 		}
