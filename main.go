@@ -31,6 +31,22 @@ const (
 	// them with what actually happened -- and it costs nothing extra, since one
 	// page covers daysPerPage days either way.
 	dailyLookbackDays = 2
+
+	// One Call 4.0's daily timeline regularly takes longer than 20 seconds to
+	// send its headers, around the quarter hours when all three locations ask
+	// at once. The /current call made before it is already billed, and the
+	// timed-out request may be too, so cutting it short wastes calls against
+	// the 1,000-a-day allowance and loses that run's observation. The function's
+	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
+	httpTimeout = 60 * time.Second
+
+	// Total time a run may spend fetching the text of alerts it has not seen
+	// before; see resolveAlerts.
+	alertLookupBudget = 3 * time.Minute
+	// Kept free of alert lookups at the end of an invocation: the S3 writes
+	// and the Grafana push that follow them, the push allowed the full HTTP
+	// timeout.
+	afterAlertsReserve = httpTimeout + 30*time.Second
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -86,7 +102,7 @@ func main() {
 	instance := &app{
 		parameters: ssm.NewFromConfig(cfg),
 		objects:    s3.NewFromConfig(cfg),
-		httpClient: &http.Client{Timeout: 20 * time.Second},
+		httpClient: &http.Client{Timeout: httpTimeout},
 		now:        time.Now,
 		bucket:     envOr("ARCHIVE_BUCKET", ""),
 		prefix:     envOr("ARCHIVE_PREFIX", "weather/"),
@@ -251,14 +267,48 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		known[alert.ID] = alert
 	}
 
+	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
+	// A day with many new alerts and a slow API could otherwise spend the
+	// whole invocation here and never save the forecast or push the metrics,
+	// so the lookups share one budget. An ID cut off by it is not stored and
+	// is tried again on the next run.
+	// The budget also ends early enough before the invocation's own deadline
+	// to leave time for saving the snapshot and pushing to Grafana after it.
+	budgetEnd := time.Now().Add(alertLookupBudget)
+	if invocationEnd, ok := ctx.Deadline(); ok {
+		if latest := invocationEnd.Add(-afterAlertsReserve); latest.Before(budgetEnd) {
+			budgetEnd = latest
+		}
+	}
+	alertCtx, cancel := context.WithDeadline(ctx, budgetEnd)
+	defer cancel()
+
 	var resolved []alertDetail
-	var failures []string
-	for _, id := range ids {
+	var unknown []string
+	for _, id := range uniqueIDs(ids) {
 		if alert, ok := known[id]; ok {
 			resolved = append(resolved, alert)
 			continue
 		}
-		alert, err := weather.alert(ctx, id)
+		unknown = append(unknown, id)
+	}
+
+	// The API lists IDs in the same order every run, so IDs that keep timing
+	// out at the front would use up the budget each time and starve the rest.
+	// Starting from a different ID each fifteen-minute slot gives every one
+	// its turn at the front without keeping any state between runs.
+	var failures []string
+	// A lookup only starts if it can wait out the full HTTP timeout before the
+	// budget ends; one cut off part-way may still have been billed and would
+	// leave nothing to store.
+	deadline, _ := alertCtx.Deadline()
+	order := rotateIDs(unknown, now)
+	for i, id := range order {
+		if time.Until(deadline) < httpTimeout {
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+			break
+		}
+		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
 			continue
@@ -271,6 +321,30 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return merged, errors.New(strings.Join(failures, "; "))
 	}
 	return merged, nil
+}
+
+// uniqueIDs drops empty and repeated IDs, keeping the order they came in.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; id == "" || dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique
+}
+
+// rotateIDs returns ids starting from an offset that advances once per
+// fifteen-minute slot of now.
+func rotateIDs(ids []string, now time.Time) []string {
+	if len(ids) < 2 {
+		return ids
+	}
+	offset := int((now.Unix() / (15 * 60)) % int64(len(ids)))
+	return append(append([]string{}, ids[offset:]...), ids[:offset]...)
 }
 
 func (a *app) openWeather(ctx context.Context) (*openWeather, error) {

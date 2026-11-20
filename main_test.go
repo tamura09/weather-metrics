@@ -589,3 +589,30 @@ func TestDominantConditionPrefersTheMoreEventfulOnATie(t *testing.T) {
 		t.Errorf("no readings = %q/%q, want empty", got, desc)
 	}
 }
+
+func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
+	ids := []string{"a", "b", "c"}
+	base := time.Unix(0, 0)
+	seen := map[string]bool{}
+	for slot := 0; slot < len(ids); slot++ {
+		got := rotateIDs(ids, base.Add(time.Duration(slot)*15*time.Minute))
+		if len(got) != len(ids) {
+			t.Fatalf("slot %d: got %v", slot, got)
+		}
+		seen[got[0]] = true
+	}
+	if len(seen) != len(ids) {
+		t.Fatalf("front IDs over %d slots: %v", len(ids), seen)
+	}
+	if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
+		t.Fatalf("input was modified: %v", ids)
+	}
+}
+
+func TestUniqueIDsDropsEmptyAndRepeatedKeepingOrder(t *testing.T) {
+	got := uniqueIDs([]string{"b", "", "a", "b", "a", "c"})
+	want := []string{"b", "a", "c"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("uniqueIDs = %v, want %v", got, want)
+	}
+}

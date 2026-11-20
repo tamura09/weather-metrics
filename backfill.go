@@ -18,8 +18,9 @@ const (
 	defaultBackfillMaxPages = 60
 	// Left on the clock when deciding whether to fetch another page, so a run
 	// that hits the limit stops between pages with its work saved instead of
-	// being killed part-way through writing a year object.
-	backfillTimeReserve = 45 * time.Second
+	// being killed part-way through writing a year object. It covers one page
+	// request waiting out the whole HTTP timeout plus the writes after it.
+	backfillTimeReserve = httpTimeout + 30*time.Second
 	backfillPace        = 200 * time.Millisecond
 )
 
