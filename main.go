@@ -220,7 +220,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
-		AlertsActive:   len(uniqueIDs(present.Alerts)),
+		AlertsActive:   countDistinct(present.Alerts),
 	}
 	if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
@@ -286,7 +286,7 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 
 	var resolved []alertDetail
 	var unknown []string
-	for _, id := range uniqueIDs(ids) {
+	for _, id := range ids {
 		if alert, ok := known[id]; ok {
 			resolved = append(resolved, alert)
 			continue
@@ -324,18 +324,15 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	return merged, nil
 }
 
-// uniqueIDs drops empty and repeated IDs, keeping the order they came in.
-func uniqueIDs(ids []string) []string {
+// countDistinct counts the distinct non-empty IDs.
+func countDistinct(ids []string) int {
 	seen := make(map[string]struct{}, len(ids))
-	unique := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if _, dup := seen[id]; id == "" || dup {
-			continue
+		if id != "" {
+			seen[id] = struct{}{}
 		}
-		seen[id] = struct{}{}
-		unique = append(unique, id)
 	}
-	return unique
+	return len(seen)
 }
 
 // rotateIDs returns ids starting from an offset that advances once per

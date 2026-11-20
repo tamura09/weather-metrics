@@ -206,12 +206,9 @@ the API does not return a tendency.
 
 `alerts_active` in the snapshot is the number of distinct alert IDs `/current`
 reported, including any whose text could not be fetched that run, so
-`weather_alerts_active` and the `?resource=summary` count can exceed the rows of
+`weather_alerts_active` and the `/summary` count can exceed the rows of
 `?resource=alerts` and the `weather_alert` series. Those texts are fetched
-again on a later run. Such an alert is not written to `alerts/` either until
-its text has been fetched: its record starts, and `first_seen` is set, on the
-first run that got the text, and an alert lifted before then never appears in
-the history. Snapshots written before the field existed fall back to
+again on a later run. Snapshots written before the field existed fall back to
 the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just
