@@ -49,7 +49,9 @@ run; a `decode alert` line in the logs means calls are being spent that way.
 A failed run spends calls too: `/current` has already been paid for by the
 time `/timeline/1day` fails. The daily timeline often takes more than 20
 seconds to answer, so the HTTP timeout is 60 seconds, and the function is
-invoked with no asynchronous retries (set in Terraform): a retry would pay for
+invoked with no asynchronous retries
+(`aws_lambda_function_event_invoke_config.weather_metrics` in
+`tamura09/terraform`): a retry would pay for
 `/current` again, and the next scheduled run fifteen minutes later covers the
 gap anyway.
 
