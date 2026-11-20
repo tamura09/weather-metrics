@@ -123,7 +123,7 @@ type forecastSnapshot struct {
 	// answered 404/410) is in neither; one whose cached text is past its end
 	// but could not be re-checked is counted. Snapshots written before it
 	// existed read as zero.
-	AlertsActive int `json:"alerts_active,omitempty"`
+	AlertsActive int `json:"alerts_active"`
 	// EndedAlertIDs are IDs /current still lists although they are confirmed
 	// over: their fetched text says so, or the API answered 404/410. Kept only
 	// while /current lists them; they are not counted, and are fetched again
