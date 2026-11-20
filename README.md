@@ -233,12 +233,11 @@ An ID in `ended_alert_ids` is fetched again only once an hour while
 after being found over is picked up by the first hourly re-check that fetches
 it successfully. A re-check that fails (other than 404/410) or does not fit the
 budget leaves the ID ended until the next hour's. If the stored snapshot cannot be
-read, the run treats it as empty and carries on, fetching the texts again
-within the budget. When the object could not be read at all (a transient S3
-error), the run reads it once more before any lookup; if that read fails too,
-the run does not write the snapshot, forecast included, and sends no alert
-series, rather than report a count built without the cache. When it is corrupt, the run's save
-replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
+read at all (a transient S3 error), the run reads it once more; if that fails
+too, the run makes no alert lookups, does not write the snapshot, forecast
+included, and sends no alert series, leaving the alerts to the next run. If it
+is corrupt, the run treats it as empty, fetches the texts again within the
+budget, and its save replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
 fails is counted as active, and tried again on later runs, until a fetched
 text shows it is over or `/current` drops it. Snapshots written
 before `alerts_active` existed fall back to the length of `alerts`.

@@ -300,21 +300,24 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// before any lookup, so a passing glitch costs no billed calls. If the
 	// snapshot is still unreadable it is treated as empty rather than
 	// stopping the run, which would leave the dashboard without metrics for
-	// as long as the alert lasts; its texts are fetched again within the
-	// budget. A corrupt one is then replaced by this run's save, the only
-	// thing that rewrites it. One that could not be read is still intact, so
-	// the run neither overwrites it nor reports an alert count built without
-	// its cache (keepStored).
+	// as long as the alert lasts. A corrupt one has its texts fetched again
+	// within the budget and is replaced by this run's save, the only thing
+	// that rewrites it. One that could not be read is still intact, so the
+	// run makes no lookups, neither overwrites it nor sends alert series
+	// (keepStored), and leaves the alerts to the next run.
 	stored, err := a.loadForecast(ctx)
 	if err != nil && !errors.Is(err, errUndecodable) {
 		log.Printf("read stored alerts, trying once more: %v", err)
 		stored, err = a.loadForecast(ctx)
 	}
+	if errors.Is(err, errUndecodable) {
+		log.Printf("stored alerts are corrupt, fetching them again: %v", err)
+		return lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
+	}
 	if err != nil {
-		log.Printf("read stored alerts, fetching them again: %v", err)
-		result, lookupErr := lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
-		result.keepStored = !errors.Is(err, errUndecodable)
-		return result, lookupErr
+		// Nothing fetched now could be saved or sent (see keepStored), so no
+		// lookups are made.
+		return alertLookup{keepStored: true}, fmt.Errorf("read stored alerts: %w", err)
 	}
 	return lookupAlerts(ctx, weather, ids, stored, now)
 }
