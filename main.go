@@ -200,7 +200,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
-	alerts, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	alerts, unfetchedAlerts, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
@@ -220,7 +220,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
-		AlertsActive:   len(uniqueIDs(present.Alerts)),
+		AlertsActive:   len(alerts) + unfetchedAlerts,
 	}
 	if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
@@ -253,15 +253,17 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
 // 4.0 charges for /alert/{id} like any other call, so only IDs whose text is not
-// already in the stored snapshot are fetched -- normally none.
-func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) ([]alertDetail, error) {
+// already in the stored snapshot are fetched -- normally none. unfetched is
+// how many IDs are still in force but have no text yet, because their lookup
+// failed or did not fit in the budget.
+func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alerts []alertDetail, unfetched int, err error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	stored, err := a.loadForecast(ctx)
 	if err != nil {
-		return nil, err
+		return nil, len(uniqueIDs(ids)), err
 	}
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
@@ -307,11 +309,13 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	for i, id := range order {
 		if time.Until(deadline) < httpTimeout {
 			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+			unfetched += len(order) - i
 			break
 		}
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			unfetched++
 			continue
 		}
 		resolved = append(resolved, alert)
@@ -319,9 +323,9 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 
 	merged := mergeAlerts(nil, resolved, now)
 	if len(failures) > 0 {
-		return merged, errors.New(strings.Join(failures, "; "))
+		return merged, unfetched, errors.New(strings.Join(failures, "; "))
 	}
-	return merged, nil
+	return merged, unfetched, nil
 }
 
 // uniqueIDs drops empty and repeated IDs, keeping the order they came in.

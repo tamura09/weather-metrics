@@ -612,7 +612,7 @@ func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 func TestActiveAlertsCountsIDsWhoseTextWasNotFetched(t *testing.T) {
 	snapshot := forecastSnapshot{
 		Alerts:       []alertDetail{{ID: "a"}},
-		AlertsActive: len(uniqueIDs([]string{"a", "b", "b", ""})),
+		AlertsActive: 2,
 	}
 	if got := snapshot.activeAlerts(); got != 2 {
 		t.Fatalf("activeAlerts = %d, want 2", got)
