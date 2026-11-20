@@ -283,7 +283,8 @@ type alertLookup struct {
 	unfetched int
 	// ended lists IDs /current still reports that are confirmed over: fetched
 	// text says so, or the API answered 404/410 for the ID. They are kept so
-	// later runs neither fetch nor count them again. A failed or skipped
+	// later runs do not count them and fetch them again only on the
+	// three-hourly re-check runs (endedRecheckDue). A failed or skipped
 	// re-check of a cached text past its end does not put an ID here; it is
 	// counted in unfetched and tried again on the next run.
 	ended []string
@@ -295,10 +296,11 @@ type alertLookup struct {
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
-// 4.0 charges for /alert/{id} like any other call, so only IDs not already
-// known to be over are fetched, and of those only the ones whose text is not
-// in the stored snapshot or whose stored text has passed its end (re-checked
-// for an extension) -- normally none.
+// 4.0 charges for /alert/{id} like any other call, so only these are fetched:
+// IDs whose text is not in the stored snapshot, IDs whose stored text has
+// passed its end (re-checked for an extension), and, on the three-hourly
+// re-check runs (endedRecheckDue), IDs already confirmed over that /current
+// still lists -- normally none.
 func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
 	ids = uniqueIDs(ids)
 	if len(ids) == 0 {

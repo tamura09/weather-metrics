@@ -449,7 +449,10 @@ type weatherSummaryRow struct {
 	Sunrise         int64    `json:"sunrise"`
 	Sunset          int64    `json:"sunset"`
 	Daylight        float64  `json:"daylight_seconds"`
-	AlertsActive    int      `json:"alerts_active"`
+	// AlertsActive is null when the stored count predates the latest
+	// observation: a run saved the reading but could not read (and so did not
+	// rewrite) the forecast snapshot, and the count may be stale.
+	AlertsActive *int `json:"alerts_active"`
 	// DataLagSeconds growing is how a stalled collector shows up: nothing new
 	// lands in the archive, whatever the reason, so no separate success flag is
 	// needed.
@@ -486,12 +489,16 @@ func (a *app) servedSummary(ctx context.Context, now time.Time) (weatherSummaryR
 // summarize touches no S3, so it can be tested directly against synthetic
 // readings and snapshots.
 func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Location, now time.Time) weatherSummaryRow {
-	summary := weatherSummaryRow{AlertsActive: snapshot.activeAlerts()}
+	active := snapshot.activeAlerts()
+	summary := weatherSummaryRow{AlertsActive: &active}
 	if len(readings) == 0 {
 		return summary
 	}
 
 	latest := readings[len(readings)-1]
+	if !snapshot.UpdatedAt.IsZero() && latest.Time.After(snapshot.UpdatedAt) {
+		summary.AlertsActive = nil
+	}
 	summary.Time = latest.Time.UnixMilli()
 	summary.ISO = latest.Time.In(zone).Format(time.RFC3339)
 	summary.Temp = latest.Temp

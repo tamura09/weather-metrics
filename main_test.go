@@ -253,7 +253,7 @@ func TestSummarizeCombinesForecastAndObserved(t *testing.T) {
 	if summary.WindCompass != "WSW" {
 		t.Errorf("wind compass = %q, want WSW", summary.WindCompass)
 	}
-	if summary.AlertsActive != 1 || summary.PM25 != 8.4 {
+	if summary.AlertsActive == nil || *summary.AlertsActive != 1 || summary.PM25 != 8.4 {
 		t.Errorf("alerts/air did not carry through: %+v", summary)
 	}
 	if summary.Daylight != float64(at(8, 19, 15).Unix()-at(8, 5, 30).Unix()) {
@@ -650,5 +650,18 @@ func TestRotationKeyGivesEveryIDAFrontTurnOnRecheckRuns(t *testing.T) {
 		if len(seen) != n {
 			t.Errorf("n=%d: only %v came first over %d re-check runs", n, seen, n)
 		}
+	}
+}
+
+func TestSummarizeNullsAStaleAlertCount(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, testZone)
+	readings := []observation{{Time: now.Add(-time.Minute), Temp: 10}}
+	stale := forecastSnapshot{UpdatedAt: now.Add(-16 * time.Minute)}
+	if got := summarize(readings, stale, testZone, now).AlertsActive; got != nil {
+		t.Errorf("alerts_active = %d for a snapshot older than the reading, want null", *got)
+	}
+	fresh := forecastSnapshot{UpdatedAt: now}
+	if got := summarize(readings, fresh, testZone, now).AlertsActive; got == nil || *got != 0 {
+		t.Errorf("alerts_active = %v for a current snapshot, want 0", got)
 	}
 }
