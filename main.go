@@ -342,14 +342,16 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
 			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
-			result.unfetched += len(order) - i
+			for _, rest := range order[i:] {
+				result.noText(rest, known)
+			}
 			break
 		}
 		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-			result.unfetched++
+			result.noText(id, known)
 			continue
 		}
 		if alertOver(alert, now) {
@@ -366,6 +368,19 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return result, errors.New(strings.Join(failures, "; "))
 	}
 	return result, nil
+}
+
+// noText records an ID whose text this run could not get. If the cached text
+// already says the alert is over -- it was only being re-checked for an
+// extension -- that stands, so the ID is taken as ended rather than counted
+// as active and fetched again every run; a 404 for a lifted alert would
+// otherwise do exactly that. An ID with no cached text is counted.
+func (r *alertLookup) noText(id string, known map[string]alertDetail) {
+	if _, cached := known[id]; cached {
+		r.ended = append(r.ended, id)
+		return
+	}
+	r.unfetched++
 }
 
 // alertOver reports whether an alert's announced end has passed, the same
