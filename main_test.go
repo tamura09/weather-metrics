@@ -593,7 +593,7 @@ func TestDominantConditionPrefersTheMoreEventfulOnATie(t *testing.T) {
 
 func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 	ids := []string{"a", "b", "c"}
-	base := time.Unix(0, 0)
+	base := time.Unix(15*60, 0) // slot 1: the first ordinary run after a re-check run
 	seen := map[string]bool{}
 	for slot := 0; slot < len(ids); slot++ {
 		got := rotateIDs(ids, rotationKey(base.Add(time.Duration(slot)*15*time.Minute)))
@@ -649,6 +649,28 @@ func TestRotationKeyGivesEveryIDAFrontTurnOnRecheckRuns(t *testing.T) {
 		}
 		if len(seen) != n {
 			t.Errorf("n=%d: only %v came first over %d re-check runs", n, seen, n)
+		}
+	}
+}
+
+func TestRotationKeyGivesEveryIDAFrontTurnOnOrdinaryRuns(t *testing.T) {
+	for _, n := range []int{2, 3, 11, 12, 24} {
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprint(i)
+		}
+		seen := map[string]bool{}
+		runs := 0
+		for slot := int64(0); runs < n; slot++ {
+			now := time.Unix(slot*15*60, 0)
+			if endedRecheckDue(now) {
+				continue
+			}
+			runs++
+			seen[rotateIDs(ids, rotationKey(now))[0]] = true
+		}
+		if len(seen) != n {
+			t.Errorf("n=%d: only %d IDs came first over %d ordinary runs", n, len(seen), n)
 		}
 	}
 }

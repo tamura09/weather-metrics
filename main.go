@@ -473,17 +473,19 @@ func uniqueIDs(ids []string) []string {
 	return unique
 }
 
-// rotationKey picks where this run's lookups start. It advances once per
-// fifteen-minute slot, but on the re-check runs -- the only runs where ended
-// IDs join the lookups -- it advances once per re-check instead: those runs
-// fall on every endedRecheckSlots-th slot, and a slot-based offset would then
-// only take multiples of gcd(endedRecheckSlots, n) and skip some IDs for good.
+// rotationKey picks where this run's lookups start. Re-check runs (every
+// endedRecheckSlots-th slot, the only runs where ended IDs join the lookups)
+// and ordinary runs each count up through consecutive integers of their own:
+// the n-th re-check run gets n, the n-th ordinary run gets n. Using the raw
+// slot instead would give either kind of run only some offsets -- multiples
+// of gcd(endedRecheckSlots, len) on re-check runs, and never a multiple of
+// endedRecheckSlots on ordinary ones -- and skip some IDs for good.
 func rotationKey(now time.Time) int64 {
 	slot := now.Unix() / (15 * 60)
 	if endedRecheckDue(now) {
 		return slot / endedRecheckSlots
 	}
-	return slot
+	return slot - slot/endedRecheckSlots - 1
 }
 
 // rotateIDs returns ids starting from an offset that advances with key.
