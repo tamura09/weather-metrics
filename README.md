@@ -52,8 +52,8 @@ seconds to answer, so the HTTP timeout is 60 seconds, and the function is
 invoked with no asynchronous retries
 (`aws_lambda_function_event_invoke_config.weather_metrics` in
 `tamura09/terraform`): a retry would pay for
-`/current` again, and the next scheduled run fifteen minutes later covers the
-gap anyway.
+`/current` again. A failed run's observation stays missing; the next scheduled
+run fifteen minutes later picks up with the conditions at that time.
 
 For JMA warnings `/alert/{id}` returns an empty `event`, the description as a
 list of translations (also empty), and English `tags` such as `Wind`. The kind
