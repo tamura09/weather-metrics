@@ -58,16 +58,17 @@ with several of them a given one is fetched only when its turn comes within
 the budget. How an alert without text is counted and archived is described with
 the archive layout under [The archive](#the-archive) below.
 
-A failed run spends calls too: `/current` has already been paid for by the
-time `/timeline/1day` fails. The daily timeline often takes more than 20
-seconds to answer, so the HTTP timeout is 60 seconds, and the function is
-invoked with no asynchronous retries
+The daily timeline stalls for a minute or more around OpenWeather's
+three-hourly updates: from 2026-11-17 runs in the hours starting 00, 03, 06,
+... UTC regularly waited past even a 60-second timeout, while the rest of the
+day it answers in a second or two. A run therefore archives its observation
+from `/current` before asking for either timeline, and a timeline that fails
+is not fatal: the previous run's daily or hourly forecast (from the current
+day or hour on) stands in, and the reading is still pushed. The HTTP timeout
+is 60 seconds, and the function is invoked with no asynchronous retries
 (`aws_lambda_function_event_invoke_config.weather_metrics` in
-`tamura09/terraform`): a retry would pay for
-`/current` again. Because `/timeline/1day` fails before the observation is
-saved, that run's observation stays missing; the next scheduled run fifteen
-minutes later picks up with the conditions at that time. (A run that fails
-later, say on the Grafana push, has already archived its observation.)
+`tamura09/terraform`): a retry would pay for `/current` again, and the next
+scheduled run fifteen minutes later fetches the timelines anew.
 
 For JMA warnings `/alert/{id}` returns an empty `event`, the description as a
 list of translations (also empty), and English `tags` such as `Wind`. The kind

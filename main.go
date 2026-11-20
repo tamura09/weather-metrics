@@ -174,15 +174,6 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	}
 	present := current.Data[0]
 
-	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
-	if err != nil {
-		return nil, fmt.Errorf("read daily timeline: %w", err)
-	}
-	hours, err := weather.hours(ctx, now.Unix())
-	if err != nil {
-		return nil, fmt.Errorf("read hourly timeline: %w", err)
-	}
-
 	// Air quality is a separate 2.5 endpoint on its own quota, and a nice-to-
 	// have next to the temperature the dashboard exists for. A failure here
 	// should not cost us the reading we came for.
@@ -191,6 +182,10 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		log.Printf("air pollution: %v", err)
 	}
 
+	// The reading is archived before the timelines are asked for. The daily
+	// timeline in particular stalls for a minute or more around OpenWeather's
+	// three-hourly updates (00, 03, ... UTC), and a run that stopped there
+	// used to lose the reading it had already paid for.
 	reading := buildObservation(present, air, now)
 	if err := a.archiveObservation(ctx, reading, now); err != nil {
 		return nil, fmt.Errorf("archive observation: %w", err)
@@ -201,9 +196,41 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		log.Printf("thin earlier observations: %v", err)
 	}
 
-	dayRecords := buildDays(days.Data, a.zone, now)
-	if err := a.archiveDays(ctx, dayRecords); err != nil {
-		return nil, fmt.Errorf("archive daily timeline: %w", err)
+	// A timeline that fails is not fatal either: the forecast changes slowly,
+	// so the previous run's copy stands in until the next run, and the
+	// reading still gets pushed.
+	var previous *forecastSnapshot
+	previousForecast := func() forecastSnapshot {
+		if previous == nil {
+			stored, err := a.loadForecast(ctx)
+			if err != nil {
+				log.Printf("read previous forecast: %v", err)
+			}
+			previous = &stored
+		}
+		return *previous
+	}
+
+	var dayRecords, dailyForecast []dayRecord
+	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
+	if err != nil {
+		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
+		dailyForecast = forecastDays(previousForecast().Daily, now, a.zone)
+	} else {
+		dayRecords = buildDays(days.Data, a.zone, now)
+		if err := a.archiveDays(ctx, dayRecords); err != nil {
+			return nil, fmt.Errorf("archive daily timeline: %w", err)
+		}
+		dailyForecast = forecastDays(dayRecords, now, a.zone)
+	}
+
+	var hourly []hourRecord
+	hours, err := weather.hours(ctx, now.Unix())
+	if err != nil {
+		log.Printf("read hourly timeline, keeping the previous forecast: %v", err)
+		hourly = upcomingHours(previousForecast().Hourly, now)
+	} else {
+		hourly = buildHours(hours.Data)
 	}
 
 	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
@@ -219,8 +246,8 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		UpdatedAt:      now.UTC(),
 		Timezone:       current.Timezone,
 		TimezoneOffset: current.TimezoneOffset,
-		Hourly:         buildHours(hours.Data),
-		Daily:          forecastDays(dayRecords, now, a.zone),
+		Hourly:         hourly,
+		Daily:          dailyForecast,
 		Alerts:         alerts,
 		AlertsActive:   len(alerts) + lookup.unfetched,
 		EndedAlertIDs:  lookup.ended,
@@ -648,6 +675,19 @@ func forecastDays(days []dayRecord, now time.Time, zone *time.Location) []dayRec
 		forward = append(forward, day)
 	}
 	return forward
+}
+
+// upcomingHours keeps the stored hourly forecast from the current hour on,
+// for a run whose own hourly timeline failed.
+func upcomingHours(hours []hourRecord, now time.Time) []hourRecord {
+	from := now.Truncate(time.Hour).UnixMilli()
+	var upcoming []hourRecord
+	for _, hour := range hours {
+		if hour.Time >= from {
+			upcoming = append(upcoming, hour)
+		}
+	}
+	return upcoming
 }
 
 func buildHours(points []weatherPoint) []hourRecord {

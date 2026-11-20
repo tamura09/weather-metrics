@@ -674,3 +674,16 @@ func TestRotationKeyGivesEveryIDAFrontTurnOnOrdinaryRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestUpcomingHoursKeepsTheCurrentHourOn(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 40, 0, 0, time.UTC)
+	hours := []hourRecord{
+		{Time: now.Add(-2 * time.Hour).Truncate(time.Hour).UnixMilli()},
+		{Time: now.Truncate(time.Hour).UnixMilli()},
+		{Time: now.Add(time.Hour).Truncate(time.Hour).UnixMilli()},
+	}
+	got := upcomingHours(hours, now)
+	if len(got) != 2 || got[0].Time != hours[1].Time {
+		t.Fatalf("upcomingHours = %v, want the 12:00 and 13:00 hours", got)
+	}
+}
