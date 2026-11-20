@@ -237,8 +237,8 @@ func (o *openWeather) timeline(ctx context.Context, endpoint string, query url.V
 }
 
 // alert fetches one alert's text. 4.0 embeds only IDs in the weather payloads,
-// so this is called just for IDs the archive has not already stored -- which on
-// an ordinary day is none of them.
+// so this is called just for IDs the archive has not already stored, or whose
+// stored text has passed its end -- which on an ordinary day is none of them.
 func (o *openWeather) alert(ctx context.Context, id string) (alertDetail, error) {
 	query := url.Values{}
 	query.Set("appid", o.apiKey)

@@ -209,12 +209,6 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		// of the snapshot is stored without it.
 		log.Printf("resolve alerts: %v", err)
 	}
-	// The history is for the dashboard's record of past warnings; losing one
-	// run's entry costs a fifteen-minute gap at worst, not the reading.
-	if err := a.archiveAlerts(ctx, alerts, now); err != nil {
-		log.Printf("archive alerts: %v", err)
-	}
-
 	snapshot := forecastSnapshot{
 		UpdatedAt:      now.UTC(),
 		Timezone:       current.Timezone,
@@ -236,6 +230,12 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 			save = false
 			log.Printf("forecast snapshot left as it was, since it could not be read this run: %v", err)
 		}
+	}
+	// The history is for the dashboard's record of past warnings; losing one
+	// run's entry costs a fifteen-minute gap at worst, not the reading. It is
+	// written after any cache carried over above, so restored texts count too.
+	if err := a.archiveAlerts(ctx, snapshot.Alerts, now); err != nil {
+		log.Printf("archive alerts: %v", err)
 	}
 	if save {
 		if err := a.saveForecast(ctx, snapshot); err != nil {

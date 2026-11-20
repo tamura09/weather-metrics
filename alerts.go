@@ -113,7 +113,8 @@ func (a *app) loadAlertYear(ctx context.Context, year string) (yearAlerts, error
 // alert seen again keeps its first_seen and moves its last_seen on. Its text is
 // whatever resolveAlerts handed over, which for a known ID is the copy cached in
 // the snapshot: re-fetching would be a billed call per alert per run, so a
-// revision the issuer makes under the same ID is not followed.
+// revision the issuer makes under the same ID is picked up only when the cached
+// text passes its end and is fetched again to check for an extension.
 func mergeAlertHistory(stored []alertRecord, seen []alertDetail, now time.Time) []alertRecord {
 	byID := make(map[string]alertRecord, len(stored)+len(seen))
 	for _, record := range stored {
