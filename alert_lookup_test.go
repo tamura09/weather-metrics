@@ -120,22 +120,33 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	future := now.Add(time.Hour).Unix()
 	stored := forecastSnapshot{
-		Alerts:        []alertDetail{{ID: "old", End: future}, {ID: "gone", End: now.Add(-time.Hour).Unix()}},
-		EndedAlertIDs: []string{"ended-before", "new"},
+		Alerts: []alertDetail{
+			{ID: "unfetched", End: future},                 // run had no text: take the cached one
+			{ID: "lifted", End: future},                    // /current no longer lists it
+			{ID: "ended-now", End: future},                 // run found it over: run wins
+			{ID: "stale", End: now.Add(-time.Hour).Unix()}, // past its end: not revived
+		},
+		EndedAlertIDs: []string{"ended-before", "ended-gone", "new"},
 	}
 	built := forecastSnapshot{
 		Alerts:        []alertDetail{{ID: "new", End: future}},
 		EndedAlertIDs: []string{"ended-now"},
 	}
-	alerts, ended := carryAlertCache(stored, built, now)
-	var ids []string
+	ids := []string{"unfetched", "ended-now", "stale", "ended-before", "new", "no-text"}
+
+	alerts, ended, active := carryAlertCache(stored, built, ids, now)
+	var got []string
 	for _, alert := range alerts {
-		ids = append(ids, alert.ID)
+		got = append(got, alert.ID)
 	}
-	if strings.Join(sorted(ids), ",") != "new,old" {
-		t.Errorf("alerts = %v, want new, old", ids)
+	if strings.Join(sorted(got), ",") != "new,unfetched" {
+		t.Errorf("alerts = %v, want new, unfetched", got)
 	}
 	if strings.Join(ended, ",") != "ended-before,ended-now" {
-		t.Errorf("ended = %v, want ended-before, ended-now (new has text now)", ended)
+		t.Errorf("ended = %v, want ended-before, ended-now", ended)
+	}
+	// new, unfetched with text; stale and no-text still without.
+	if active != 4 {
+		t.Errorf("active = %d, want 4", active)
 	}
 }

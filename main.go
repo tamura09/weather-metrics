@@ -231,7 +231,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		// Try once more and carry it over, so this run's forecast is saved
 		// without losing texts and ended IDs it could not see.
 		if stored, err := a.loadForecast(ctx); err == nil {
-			snapshot.Alerts, snapshot.EndedAlertIDs = carryAlertCache(stored, snapshot, now)
+			snapshot.Alerts, snapshot.EndedAlertIDs, snapshot.AlertsActive = carryAlertCache(stored, snapshot, uniqueIDs(present.Alerts), now)
 		} else {
 			save = false
 			log.Printf("forecast snapshot left as it was, since it could not be read this run: %v", err)
@@ -416,25 +416,49 @@ func (r *alertLookup) noText(id string, known map[string]alertDetail) {
 }
 
 // carryAlertCache merges the alert cache of a snapshot this run could not
-// read at first into the one it built: stored texts not past their end and
-// stored ended IDs are kept alongside this run's. AlertsActive is left as the
-// run counted it.
-func carryAlertCache(stored, built forecastSnapshot, now time.Time) ([]alertDetail, []string) {
-	alerts := mergeAlerts(stored.Alerts, built.Alerts, now)
-	have := make(map[string]bool, len(alerts))
-	for _, alert := range alerts {
-		have[alert.ID] = true
+// read at first into the one it built, for the IDs /current reports now
+// (ids). What the run itself decided wins: a stored text is taken only for an
+// ID the run left without text, and only if it is not past its end; a stored
+// ended ID only for an ID the run did not get text for. IDs /current no longer
+// reports are dropped. The returned count is alerts plus IDs still without
+// text, as AlertsActive.
+func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time) ([]alertDetail, []string, int) {
+	current := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		current[id] = true
 	}
-	seen := make(map[string]bool)
-	var ended []string
-	for _, id := range append(append([]string{}, stored.EndedAlertIDs...), built.EndedAlertIDs...) {
-		if !seen[id] && !have[id] {
-			seen[id] = true
-			ended = append(ended, id)
+	decided := make(map[string]bool)
+	for _, alert := range built.Alerts {
+		decided[alert.ID] = true
+	}
+	for _, id := range built.EndedAlertIDs {
+		decided[id] = true
+	}
+
+	alerts := append([]alertDetail{}, built.Alerts...)
+	ended := append([]string{}, built.EndedAlertIDs...)
+	for _, alert := range stored.Alerts {
+		if current[alert.ID] && !decided[alert.ID] && !alertOver(alert, now) {
+			alerts = append(alerts, alert)
+			decided[alert.ID] = true
 		}
 	}
+	for _, id := range stored.EndedAlertIDs {
+		if current[id] && !decided[id] {
+			ended = append(ended, id)
+			decided[id] = true
+		}
+	}
+	alerts = mergeAlerts(nil, alerts, now)
 	sort.Strings(ended)
-	return alerts, ended
+
+	withoutText := 0
+	for id := range current {
+		if !decided[id] {
+			withoutText++
+		}
+	}
+	return alerts, ended, len(alerts) + withoutText
 }
 
 // alertOver reports whether an alert's announced end has passed, the same
