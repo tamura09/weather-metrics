@@ -31,6 +31,14 @@ const (
 	// them with what actually happened -- and it costs nothing extra, since one
 	// page covers daysPerPage days either way.
 	dailyLookbackDays = 2
+
+	// One Call 4.0's daily timeline regularly takes longer than 20 seconds to
+	// send its headers, around the quarter hours when all three locations ask
+	// at once. The /current call made before it is already billed, and the
+	// timed-out request may be too, so cutting it short wastes calls against
+	// the 1,000-a-day allowance and loses that run's observation. The function's
+	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
+	httpTimeout = 60 * time.Second
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -86,7 +94,7 @@ func main() {
 	instance := &app{
 		parameters: ssm.NewFromConfig(cfg),
 		objects:    s3.NewFromConfig(cfg),
-		httpClient: &http.Client{Timeout: 20 * time.Second},
+		httpClient: &http.Client{Timeout: httpTimeout},
 		now:        time.Now,
 		bucket:     envOr("ARCHIVE_BUCKET", ""),
 		prefix:     envOr("ARCHIVE_PREFIX", "weather/"),

@@ -46,6 +46,13 @@ stored snapshot, which on a day with no weather warnings is none of them. If
 an alert cannot be decoded it is never stored, so it is fetched again on every
 run; a `decode alert` line in the logs means calls are being spent that way.
 
+A failed run spends calls too: `/current` has already been paid for by the
+time `/timeline/1day` fails. The daily timeline often takes more than 20
+seconds to answer, so the HTTP timeout is 60 seconds, and the function is
+invoked with no asynchronous retries (set in Terraform): a retry would pay for
+`/current` again, and the next scheduled run fifteen minutes later covers the
+gap anyway.
+
 For JMA warnings `/alert/{id}` returns an empty `event`, the description as a
 list of translations (also empty), and English `tags` such as `Wind`. The kind
 of warning is only in the ID, `VPWW54_<office>_...:<code>:<area>:...`, where
