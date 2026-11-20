@@ -215,7 +215,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	if err != nil {
 		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
 		dailyForecast = forecastDays(stored.Daily, now, a.zone)
-		dailyUpdatedAt = stored.DailyUpdatedAt
+		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, stored)
 	} else {
 		dayRecords = buildDays(days.Data, a.zone, now)
 		if err := a.archiveDays(ctx, dayRecords); err != nil {
@@ -230,7 +230,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	if err != nil {
 		log.Printf("read hourly timeline, keeping the previous forecast: %v", err)
 		hourly = upcomingHours(stored.Hourly, now)
-		hourlyUpdatedAt = stored.HourlyUpdatedAt
+		hourlyUpdatedAt = fetchedAt(stored.HourlyUpdatedAt, stored)
 	} else {
 		hourly = buildHours(hours.Data)
 	}
@@ -685,6 +685,16 @@ func forecastDays(days []dayRecord, now time.Time, zone *time.Location) []dayRec
 		forward = append(forward, day)
 	}
 	return forward
+}
+
+// fetchedAt is when a carried-over forecast was fetched: its own timestamp,
+// or for a snapshot written before those existed, the snapshot's updated_at,
+// when every part of it was fetched.
+func fetchedAt(at time.Time, stored forecastSnapshot) time.Time {
+	if at.IsZero() {
+		return stored.UpdatedAt
+	}
+	return at
 }
 
 // upcomingHours keeps the stored hourly forecast from the current hour on,
