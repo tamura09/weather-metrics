@@ -228,7 +228,8 @@ per run. Unfetched texts are tried again on a
 later run, and such an alert is not written to `alerts/` until its text has
 been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
-An ID in `ended_alert_ids` is fetched again only once an hour while
+An ID in `ended_alert_ids` is fetched again only on the run in the first
+fifteen-minute slot of each hour (a manual run in that slot re-checks too) while
 `/current` lists it, to save calls, so an alert extended under the same ID
 after being found over is picked up by the first hourly re-check that fetches
 it successfully. A re-check that fails (other than 404/410) or does not fit the

@@ -254,13 +254,19 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("remote_write to Grafana Cloud: %w", err)
 	}
 
+	// With the alert cache unreadable the count is unknown, so it is null
+	// rather than a zero that reads like "no alerts".
+	var alertsActive any = snapshot.activeAlerts()
+	if snapshot.alertsUnknown {
+		alertsActive = nil
+	}
 	return map[string]any{
 		"location":       a.location,
 		"observed_at":    reading.Time,
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
 		"hours_stored":   hoursStored,
-		"alerts_active":  snapshot.activeAlerts(),
+		"alerts_active":  alertsActive,
 		"series_pushed":  pushed,
 		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
 	}, nil
@@ -396,13 +402,17 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
+			// A 404 or 410 confirms the alert is gone, so stop paying for it;
+			// that is an answer, not a failure. Anything else (a timeout, a
+			// 5xx) may pass, so the ID is counted and tried again on the next
+			// run, except that a failed hourly re-check of an ID already
+			// confirmed over leaves it ended.
+			if isGone(err) {
+				result.ended = append(result.ended, id)
+				continue
+			}
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-			// A 404 or 410 confirms the alert is gone, so stop paying for it.
-			// Anything else (a timeout, a 5xx) may pass, so the ID is counted
-			// and tried again on the next run.
-			// A failed hourly re-check of an ID already confirmed over leaves
-			// it ended.
-			if isGone(err) || wasEnded[id] {
+			if wasEnded[id] {
 				result.ended = append(result.ended, id)
 			} else {
 				result.unfetched++
