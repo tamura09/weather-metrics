@@ -202,9 +202,6 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	}
 
 	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
-	if errors.Is(err, errAlertCacheUnreadable) {
-		return nil, err
-	}
 	alerts := lookup.alerts
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
@@ -281,9 +278,15 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return alertLookup{}, nil
 	}
 
+	// An unreadable snapshot (a transient S3 error, or a corrupt object that
+	// only this run's save would replace) is treated as empty rather than
+	// stopping the run: stopping would leave the dashboard without metrics
+	// for as long as the alert lasts. The cost is that cached texts and
+	// ended_alert_ids are fetched again within the budget.
 	stored, err := a.loadForecast(ctx)
 	if err != nil {
-		return alertLookup{}, fmt.Errorf("%w: %v", errAlertCacheUnreadable, err)
+		log.Printf("read stored alerts, fetching them again: %v", err)
+		stored = forecastSnapshot{}
 	}
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
@@ -364,12 +367,6 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	}
 	return result, nil
 }
-
-// errAlertCacheUnreadable means the stored snapshot, which holds the alert
-// texts already paid for and the IDs known to be over, could not be read.
-// Carrying on would count those alerts wrongly and overwrite the snapshot
-// without them, so the run stops instead.
-var errAlertCacheUnreadable = errors.New("read stored alerts")
 
 // alertOver reports whether an alert's announced end has passed, the same
 // test mergeAlerts uses to drop it.

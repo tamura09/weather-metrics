@@ -49,8 +49,8 @@ runs while it is still in force; a `decode alert` line in the logs means calls
 are being spent that way. Lookups of unknown IDs share a three-minute budget
 per run and start from a different ID each run, so with several unknown IDs a
 given one is fetched only when its turn comes within the budget. An alert
-whose text has not been fetched is left out of the snapshot, the alert count
-and `alerts/` until a run gets it: its history record starts, and
+whose text has not been fetched is left out of the snapshot's `alerts` and of
+`alerts/` until a run gets it, though it is counted in `alerts_active`: its history record starts, and
 `first_seen` is set, on that run, and an alert lifted before then never
 appears in the history.
 
@@ -222,8 +222,11 @@ as over, in case the alert was extended. Unfetched texts are tried again on a
 later run, and such an alert is not written to `alerts/` until its text has
 been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
-If the stored snapshot cannot be read, the run stops before writing a new one,
-so the cached texts and `ended_alert_ids` are not lost. Snapshots written
+An ID in `ended_alert_ids` is not fetched again while `/current` lists it, to
+save calls, so an alert extended under the same ID after being found over is
+missed until it reappears under a new ID. If the stored snapshot cannot be
+read, the run treats it as empty and carries on, fetching the cached texts
+again within the budget; `ended_alert_ids` is lost and rebuilt the same way. Snapshots written
 before `alerts_active` existed fall back to the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just
