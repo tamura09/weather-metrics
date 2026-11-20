@@ -92,7 +92,7 @@ func buildTimeSeries(location string, reading observation, snapshot forecastSnap
 	series = append(series, airSeries(base, reading, timestamp)...)
 	series = append(series, todaySeries(base, snapshot, month, zone, now, timestamp)...)
 	series = append(series, trendSeries(base, month, now, timestamp)...)
-	series = append(series, alertSeries(base, snapshot.activeAlerts(), snapshot.Alerts, timestamp)...)
+	series = append(series, alertSeries(base, snapshot.Alerts, timestamp)...)
 
 	return series
 }
@@ -178,9 +178,9 @@ func trendSeries(base map[string]string, month []observation, now time.Time, tim
 	return series
 }
 
-func alertSeries(base map[string]string, active int, alerts []alertDetail, timestamp int64) []prompb.TimeSeries {
+func alertSeries(base map[string]string, alerts []alertDetail, timestamp int64) []prompb.TimeSeries {
 	series := []prompb.TimeSeries{
-		gauge("weather_alerts_active", base, float64(active), timestamp),
+		gauge("weather_alerts_active", base, float64(len(alerts)), timestamp),
 	}
 	for _, alert := range alerts {
 		series = append(series, gauge("weather_alert", merge(base, map[string]string{

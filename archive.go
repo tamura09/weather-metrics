@@ -117,19 +117,6 @@ type forecastSnapshot struct {
 	Hourly         []hourRecord  `json:"hourly"`
 	Daily          []dayRecord   `json:"daily"`
 	Alerts         []alertDetail `json:"alerts"`
-	// AlertsActive is how many distinct alert IDs /current reported. It can
-	// exceed len(Alerts) when some texts could not be fetched this run;
-	// snapshots written before it existed read as zero.
-	AlertsActive int `json:"alerts_active,omitempty"`
-}
-
-// activeAlerts is the number of alerts in force, whether or not their text
-// was fetched.
-func (s forecastSnapshot) activeAlerts() int {
-	if s.AlertsActive > len(s.Alerts) {
-		return s.AlertsActive
-	}
-	return len(s.Alerts)
 }
 
 type hourRecord struct {

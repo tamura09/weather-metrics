@@ -220,7 +220,6 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
-		AlertsActive:   countDistinct(present.Alerts),
 	}
 	if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
@@ -245,7 +244,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
 		"hours_stored":   len(snapshot.Hourly),
-		"alerts_active":  snapshot.activeAlerts(),
+		"alerts_active":  len(snapshot.Alerts),
 		"series_pushed":  pushed,
 		"api_calls_made": 3, // current + one day page + one hour page
 	}, nil
@@ -306,7 +305,7 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
 		if time.Until(deadline) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+			failures = append(failures, fmt.Sprintf("lookup budget of %s used up; %d alert(s) left for the next run", alertLookupBudget, len(order)-i))
 			break
 		}
 		alert, err := weather.alert(alertCtx, id)
@@ -322,17 +321,6 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return merged, errors.New(strings.Join(failures, "; "))
 	}
 	return merged, nil
-}
-
-// countDistinct counts the distinct non-empty IDs.
-func countDistinct(ids []string) int {
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		if id != "" {
-			seen[id] = struct{}{}
-		}
-	}
-	return len(seen)
 }
 
 // rotateIDs returns ids starting from an offset that advances once per
