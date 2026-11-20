@@ -220,21 +220,25 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 			err = errors.New("daily timeline had no days from today on")
 		}
 	}
+	// Whatever days did come back are archived even if none is from today
+	// on, so a settled day is not lost; only the forecast falls back.
+	if len(dayRecords) > 0 {
+		if err := a.archiveDays(ctx, dayRecords); err != nil {
+			return nil, fmt.Errorf("archive daily timeline: %w", err)
+		}
+	}
 	if err != nil {
 		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
-		dayRecords = nil
 		dailyForecast = forecastDays(stored.Daily, now, a.zone)
 		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, len(stored.Daily) > 0, stored)
-	} else if err := a.archiveDays(ctx, dayRecords); err != nil {
-		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
 	var hourly []hourRecord
 	hourlyUpdatedAt := now.UTC()
 	hours, err := weather.hours(ctx, now.Unix())
 	if err == nil {
-		if hourly = buildHours(hours.Data); len(hourly) == 0 {
-			err = errors.New("hourly timeline had no usable hours")
+		if hourly = upcomingHours(buildHours(hours.Data), now); len(hourly) == 0 {
+			err = errors.New("hourly timeline had no hours from the current one on")
 		}
 	}
 	if err != nil {
