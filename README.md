@@ -215,7 +215,8 @@ can exceed the rows of `?resource=alerts` and the `weather_alert` series. An ID
 is left out of the count only when its end is confirmed: text fetched for it
 says its announced end has passed, or the API answers 404/410 for it. Such IDs
 go into `ended_alert_ids` while `/current` keeps listing
-them, so they are neither fetched nor counted again. An ID with no text at all is counted
+them, so they are not counted again and are fetched again only in the hourly
+re-check below. An ID with no text at all is counted
 even if it has in fact ended, since nothing says so yet. A cached text that has
 passed its end is fetched again before the ID is taken as over, in case the
 alert was extended; if that fetch fails (other than 404/410) or does not fit
@@ -226,7 +227,8 @@ been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
 An ID in `ended_alert_ids` is fetched again only once an hour while
 `/current` lists it, to save calls, so an alert extended under the same ID
-after being found over is picked up within an hour. If the stored snapshot cannot be
+after being found over is picked up within an hour. A re-check that fails
+(other than 404/410) or does not fit the budget leaves the ID ended. If the stored snapshot cannot be
 read, the run treats it as empty and carries on, fetching the texts again
 within the budget. When the object could not be read at all (a transient S3
 error), the run reads it once more before saving and carries its cached texts

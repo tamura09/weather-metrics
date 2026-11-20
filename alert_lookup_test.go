@@ -184,3 +184,22 @@ func TestLookupAlertsRechecksEndedIDsHourly(t *testing.T) {
 		t.Errorf("alerts=%v ended=%v; want the extension picked up", got.alerts, got.ended)
 	}
 }
+
+func TestLookupAlertsFailedHourlyRecheckLeavesIDEnded(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	weather, _ := alertServer(t, map[string]alertDetail{}) // 500 for everything
+	stored := forecastSnapshot{EndedAlertIDs: []string{"ended-a", "ended-b"}}
+
+	got, _ := lookupAlerts(context.Background(), weather, []string{"ended-a"}, stored, now)
+	if strings.Join(got.ended, ",") != "ended-a" || got.unfetched != 0 {
+		t.Errorf("failed re-check: ended=%v unfetched=%d; want ended=[ended-a] unfetched=0", got.ended, got.unfetched)
+	}
+
+	// Out of budget before the re-check can start.
+	ctx, cancel := context.WithTimeout(context.Background(), afterAlertsReserve+httpTimeout/2)
+	defer cancel()
+	got, _ = lookupAlerts(ctx, weather, []string{"ended-b", "new"}, stored, now)
+	if strings.Join(got.ended, ",") != "ended-b" || got.unfetched != 1 {
+		t.Errorf("skipped re-check: ended=%v unfetched=%d; want ended=[ended-b] unfetched=1", got.ended, got.unfetched)
+	}
+}

@@ -380,7 +380,15 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
-			result.unfetched += len(order) - i
+			// An hourly re-check of an ID already confirmed over that does not
+			// happen leaves it ended; anything else is counted and retried.
+			for _, rest := range order[i:] {
+				if wasEnded[rest] {
+					result.ended = append(result.ended, rest)
+				} else {
+					result.unfetched++
+				}
+			}
 			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
 			break
 		}
@@ -391,7 +399,9 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 			// A 404 or 410 confirms the alert is gone, so stop paying for it.
 			// Anything else (a timeout, a 5xx) may pass, so the ID is counted
 			// and tried again on the next run.
-			if isGone(err) {
+			// A failed hourly re-check of an ID already confirmed over leaves
+			// it ended.
+			if isGone(err) || wasEnded[id] {
 				result.ended = append(result.ended, id)
 			} else {
 				result.unfetched++
