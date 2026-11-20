@@ -206,7 +206,8 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
-		// of the snapshot is stored without it.
+		// of the snapshot is stored without it -- unless the stored snapshot
+		// could not be read at all (keepStored), when nothing is stored.
 		log.Printf("resolve alerts: %v", err)
 	}
 	snapshot := forecastSnapshot{
@@ -303,14 +304,14 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	}
 
 	// A read that fails outright (a transient S3 error) is tried once more
-	// before any lookup, so a passing glitch costs no billed calls. If the
-	// snapshot is still unreadable it is treated as empty rather than
-	// stopping the run, which would leave the dashboard without metrics for
-	// as long as the alert lasts. A corrupt one has its texts fetched again
-	// within the budget and is replaced by this run's save, the only thing
-	// that rewrites it. One that could not be read is still intact, so the
-	// run makes no lookups, neither overwrites it nor sends alert series
-	// (keepStored), and leaves the alerts to the next run.
+	// before any lookup, so a passing glitch costs no billed calls. Neither
+	// case below stops the run, which would leave the dashboard without
+	// metrics for as long as the alert lasts. A corrupt snapshot is treated as
+	// empty: its texts are fetched again within the budget and this run's
+	// save, the only thing that rewrites it, replaces it. One that still
+	// could not be read is intact in S3, so the run makes no lookups, does not
+	// overwrite it and sends no alert series (keepStored), leaving the alerts
+	// to the next run.
 	stored, err := a.loadForecast(ctx)
 	if err != nil && !errors.Is(err, errUndecodable) {
 		log.Printf("read stored alerts, trying once more: %v", err)
