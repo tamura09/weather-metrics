@@ -39,6 +39,10 @@ const (
 	// the 1,000-a-day allowance and loses that run's observation. The function's
 	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
 	httpTimeout = 60 * time.Second
+
+	// Total time a run may spend fetching the text of alerts it has not seen
+	// before; see resolveAlerts.
+	alertLookupBudget = 3 * time.Minute
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -259,6 +263,14 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		known[alert.ID] = alert
 	}
 
+	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
+	// A day with many new alerts and a slow API could otherwise spend the
+	// whole invocation here and never save the forecast or push the metrics,
+	// so the lookups share one budget. An ID cut off by it is not stored and
+	// is tried again on the next run.
+	alertCtx, cancel := context.WithTimeout(ctx, alertLookupBudget)
+	defer cancel()
+
 	var resolved []alertDetail
 	var failures []string
 	for _, id := range ids {
@@ -266,7 +278,7 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 			resolved = append(resolved, alert)
 			continue
 		}
-		alert, err := weather.alert(ctx, id)
+		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
 			continue
