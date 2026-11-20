@@ -41,8 +41,10 @@ const (
 	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
 	httpTimeout = 60 * time.Second
 
-	// Total time a run may spend fetching the text of alerts it has not seen
-	// before; see resolveAlerts.
+	// Total time a run may spend on /alert/{id} calls of every kind: new IDs,
+	// cached texts past their end re-fetched for an extension, and the hourly
+	// re-check of IDs confirmed over. With the 60-second timeout that is at
+	// most three slow lookups, which these share; see lookupAlerts.
 	alertLookupBudget = 3 * time.Minute
 	// Kept free of alert lookups at the end of an invocation: the S3 writes
 	// and the Grafana push that follow them, the push allowed the full HTTP
