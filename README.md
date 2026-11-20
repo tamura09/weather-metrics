@@ -27,7 +27,8 @@ available live and years later.
 
 One Call 4.0 is on the "One Call by Call" subscription: **1,000 calls a day
 free**, pay-per-call above it, and — unlike 3.0 — every page of a paginated
-timeline is its own billed call. A scheduled run therefore makes exactly three:
+timeline is its own billed call. A scheduled run therefore makes three, plus
+any `/alert/{id}` calls described below:
 
 | Call | Returns | Why one page is enough |
 | --- | --- | --- |
@@ -42,16 +43,20 @@ The Air Pollution API is still a 2.5 endpoint on the ordinary free plan, so its 
 draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
-stored snapshot, which on a day with no weather warnings is none of them. If
-an alert cannot be decoded it is never stored, so it is fetched again on later
-runs while it is still in force; a `decode alert` line in the logs means calls
-are being spent that way. Lookups of unknown IDs share a three-minute budget
-per run and start from a different ID each run, so with several unknown IDs a
-given one is fetched only when its turn comes within the budget. An alert
-whose text has not been fetched is left out of the snapshot, the alert count
-and `alerts/` until a run gets it: its history record starts, and
-`first_seen` is set, on that run, and an alert lifted before then never
-appears in the history.
+stored snapshot, or whose cached text is past its end (to catch an
+extension), and that are not already known to be over (`ended_alert_ids`,
+kept while `/current` still lists them) -- except that IDs known to be over
+are re-checked every three hours. On a day when `/current` lists no alert IDs
+at all that is none of them; an ended ID that `/current` keeps listing still
+costs its three-hourly re-check. If an alert cannot be decoded it is never stored, so it
+is fetched again on later runs while it is still in force; a `decode alert`
+line in the logs means calls are being spent that way. All these lookups share
+a three-minute budget per run, and the ID they start from rotates (by
+fifteen-minute slot, and by re-check on the three-hourly re-check runs), so every ID
+gets turns at the front over time but not necessarily on consecutive runs;
+with several of them a given one is fetched only when its turn comes within
+the budget. How an alert without text is counted and archived is described with
+the archive layout under [The archive](#the-archive) below.
 
 A failed run spends calls too: `/current` has already been paid for by the
 time `/timeline/1day` fails. The daily timeline often takes more than 20
@@ -204,9 +209,47 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...] }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
+
+`alerts_active` in the snapshot is the number of alerts taken to be in force:
+those in `alerts` plus any ID `/current` reported whose text could not be
+fetched that run, so `weather_alerts_active` and the `?resource=summary` count
+can exceed the rows of `?resource=alerts` and the `weather_alert` series. An ID
+is left out of the count only when its end is confirmed: text fetched for it
+says its announced end has passed, or the API answers 404/410 for it. Such IDs
+go into `ended_alert_ids` while `/current` keeps listing
+them, so they are not counted again and are fetched again only in the
+three-hourly re-check below. An ID with no text at all is counted
+even if it has in fact ended, since nothing says so yet. A cached text that has
+passed its end is fetched again before the ID is taken as over, in case the
+alert was extended; if that fetch fails (other than 404/410) or does not fit
+the budget, the ID is counted and re-checked on the next run, at most one call
+per run. Unfetched texts are tried again on a
+later run, and such an alert is not written to `alerts/` until its text has
+been fetched: its record starts, and `first_seen` is set, on the first run that
+got the text, and an alert lifted before then never appears in the history.
+An ID in `ended_alert_ids` is fetched again only every three hours (on the run
+in the first fifteen-minute slot of 00:00, 03:00, ... UTC; a manual run in that
+slot re-checks too) while `/current` lists it, so an alert extended under the
+same ID after being found over is picked up by the first re-check that fetches
+it successfully. A re-check that fails (other than 404/410) or does not fit the
+budget leaves the ID ended until the next one. Each lingering ended ID costs 8
+calls a day per location; with the scheduled runs at 864 of the 1,000 free
+calls, about 17 such ID-days fit, and an hourly re-check (24 a day each) would
+spill into paid calls with six. If the stored snapshot cannot be
+read at all (a transient S3 error), the run reads it once more; if that fails
+too, the run makes no alert lookups, does not write the snapshot, forecast
+included, and sends no alert series, leaving the alerts to the next run; until
+then `?resource=summary` and `?resource=alerts` show the previous run's
+alerts (and if the snapshot still cannot be read when they are requested,
+they fail with HTTP 500). If it
+is corrupt, the run treats it as empty, fetches the texts again within the
+budget, and its save replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
+fails is counted as active, and tried again on later runs, until a fetched
+text shows it is over or `/current` drops it. Snapshots written
+before `alerts_active` existed fall back to the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just
 the ones in force, and OpenWeather has no way to ask for old ones. Each run
@@ -214,8 +257,10 @@ that sees an alert updates its record by ID, under the year of its announced
 start -- or, for an alert with no start, the year it was first seen, which a
 run after New Year finds by checking the previous year's file. `first_seen`/`last_seen` are when this collector saw it; they matter
 because a warning lifted early keeps its announced `end`, and only `last_seen`
-shows that it was gone. The text is fetched once per ID, so a revision the
-issuer makes under the same ID is not followed.
+shows that it was gone. The text is fetched once per ID and fetched
+again only when the cached copy passes its end (to check for an extension), so
+other revisions the issuer makes under the same ID are not followed until
+then.
 
 Observations are keyed on the minute they were taken, so a retry inside the same
 minute corrects the stored copy instead of adding a near-duplicate point.
@@ -224,8 +269,12 @@ Daily records are keyed on the date, and a record that has settled is never
 replaced by a forecast for the same date — which is what lets a backfill walk
 forward past today without undoing history.
 
-`forecast.json` is replaced whole on every run, except for alert text, which is
-carried across runs because re-fetching it costs a billed call.
+`forecast.json` is rewritten on every run, with the alert cache -- `alerts`
+texts and `ended_alert_ids` -- read from the previous one and carried forward,
+because re-fetching costs billed calls. If the snapshot cannot be read on
+either of a run's two attempts, that run does not write it at all, so the
+hourly and daily forecast stay as the previous run left them until the next
+run.
 
 ## Retention: two weeks dense, hourly for good
 
@@ -325,7 +374,7 @@ Every query also takes `location=<location ID>`, which is required when
 | Query | Returns |
 | --- | --- |
 | `?from=<ms>&to=<ms>` | Observations in the range, with the derived indices already computed. Accepts epoch milliseconds (what Grafana's `${__from}` interpolates to) or RFC3339. Defaults to the last 30 days. |
-| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, and `data_lag_seconds`. |
+| `?resource=summary` | One object (in a one-element array, like the others) with the present conditions, today's forecast and observed extremes, the trends, air quality, `alerts_active`, and `data_lag_seconds`. `alerts_active` comes from the stored forecast snapshot, so after a run that could not read (and so did not rewrite) it, the count is the previous run's until the next run. |
 | `?resource=daily&from=<ms>&to=<ms>` | One row per date: the API's max/min plus our own observed max/min/mean and an `observations` count. Whole days, never cut by where the window lands. |
 | `?resource=observed_hourly&from=<ms>&to=<ms>` | One row per clock hour of our **own** readings: average, high and low temperature, the hour's dominant condition, rainfall, and a `readings` count (4 on a complete hour within the last two weeks, 1 for older hours, which are thinned). Starts when the collector did, unlike the backfilled daily history. |
 | `?resource=monthly&from=<ms>&to=<ms>` | One row per calendar month: how many days of each condition, average and peak temperatures, total rain and snow. Rolled up from the same daily rows the `daily` endpoint serves, so the two cannot disagree. |

@@ -117,6 +117,31 @@ type forecastSnapshot struct {
 	Hourly         []hourRecord  `json:"hourly"`
 	Daily          []dayRecord   `json:"daily"`
 	Alerts         []alertDetail `json:"alerts"`
+	// AlertsActive is how many alerts are in force: those in Alerts plus the
+	// IDs /current reported whose text could not be fetched this run. An
+	// alert confirmed over (fetched text says it has ended, or the API
+	// answered 404/410) is in neither; one whose cached text is past its end
+	// but could not be re-checked is counted. Snapshots written before it
+	// existed read as zero.
+	AlertsActive int `json:"alerts_active"`
+	// EndedAlertIDs are IDs /current still lists although they are confirmed
+	// over: their fetched text says so, or the API answered 404/410. Kept only
+	// while /current lists them; they are not counted, and are fetched again
+	// only in the three-hourly re-check (endedRecheckDue), a failed re-check
+	// leaving them here.
+	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
+	// alertsUnknown is set, for this run only, when the alert cache could not
+	// be read, so the alert series are left out of the push.
+	alertsUnknown bool
+}
+
+// activeAlerts is the number of alerts in force, whether or not their text
+// was fetched.
+func (s forecastSnapshot) activeAlerts() int {
+	if s.AlertsActive > len(s.Alerts) {
+		return s.AlertsActive
+	}
+	return len(s.Alerts)
 }
 
 type hourRecord struct {
@@ -233,6 +258,10 @@ func (a *app) saveForecast(ctx context.Context, snapshot forecastSnapshot) error
 	return a.saveJSON(ctx, a.prefix+forecastKey, snapshot)
 }
 
+// errUndecodable marks a stored object that was read but is not valid JSON
+// for its type, as opposed to one that could not be read at all.
+var errUndecodable = errors.New("decode")
+
 // loadJSON reports found=false for a key that is not there yet, which is the
 // normal state for a month or year nothing has been written to.
 func (a *app) loadJSON(ctx context.Context, key string, into any) (bool, error) {
@@ -250,7 +279,7 @@ func (a *app) loadJSON(ctx context.Context, key string, into any) (bool, error) 
 		return false, err
 	}
 	if err := json.Unmarshal(body, into); err != nil {
-		return false, fmt.Errorf("decode %s: %w", key, err)
+		return false, fmt.Errorf("%w %s: %w", errUndecodable, key, err)
 	}
 	return true, nil
 }
@@ -323,7 +352,8 @@ func sameDays(left, right []dayRecord) bool {
 }
 
 // mergeAlerts keeps the text of alerts already fetched and drops any that have
-// expired, so /alert/{id} is called once per alert rather than once per run.
+// expired, so /alert/{id} is called once per alert rather than once per run,
+// plus once more if the alert is still listed after its cached end.
 func mergeAlerts(existing, incoming []alertDetail, now time.Time) []alertDetail {
 	byID := make(map[string]alertDetail, len(existing)+len(incoming))
 	for _, alert := range existing {
@@ -335,7 +365,7 @@ func mergeAlerts(existing, incoming []alertDetail, now time.Time) []alertDetail 
 
 	merged := make([]alertDetail, 0, len(byID))
 	for _, alert := range byID {
-		if alert.End > 0 && time.Unix(alert.End, 0).Before(now) {
+		if alertOver(alert, now) {
 			continue
 		}
 		merged = append(merged, alert)

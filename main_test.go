@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -592,10 +593,10 @@ func TestDominantConditionPrefersTheMoreEventfulOnATie(t *testing.T) {
 
 func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 	ids := []string{"a", "b", "c"}
-	base := time.Unix(0, 0)
+	base := time.Unix(15*60, 0) // slot 1: the first ordinary run after a re-check run
 	seen := map[string]bool{}
 	for slot := 0; slot < len(ids); slot++ {
-		got := rotateIDs(ids, base.Add(time.Duration(slot)*15*time.Minute))
+		got := rotateIDs(ids, rotationKey(base.Add(time.Duration(slot)*15*time.Minute)))
 		if len(got) != len(ids) {
 			t.Fatalf("slot %d: got %v", slot, got)
 		}
@@ -609,10 +610,67 @@ func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 	}
 }
 
+func TestActiveAlertsCountsIDsWhoseTextWasNotFetched(t *testing.T) {
+	snapshot := forecastSnapshot{
+		Alerts:       []alertDetail{{ID: "a"}},
+		AlertsActive: 2,
+	}
+	if got := snapshot.activeAlerts(); got != 2 {
+		t.Fatalf("activeAlerts = %d, want 2", got)
+	}
+	// A snapshot written before AlertsActive existed falls back to the texts.
+	if got := (forecastSnapshot{Alerts: []alertDetail{{ID: "a"}}}).activeAlerts(); got != 1 {
+		t.Fatalf("legacy activeAlerts = %d, want 1", got)
+	}
+}
+
 func TestUniqueIDsDropsEmptyAndRepeatedKeepingOrder(t *testing.T) {
 	got := uniqueIDs([]string{"b", "", "a", "b", "a", "c"})
 	want := []string{"b", "a", "c"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("uniqueIDs = %v, want %v", got, want)
+	}
+}
+
+func TestRotationKeyGivesEveryIDAFrontTurnOnRecheckRuns(t *testing.T) {
+	for _, n := range []int{2, 3, 4, 6} {
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprint(i)
+		}
+		seen := map[string]bool{}
+		// n consecutive re-check runs.
+		for k := 0; k < n; k++ {
+			now := time.Unix(0, 0).Add(time.Duration(k*endedRecheckSlots) * 15 * time.Minute)
+			if !endedRecheckDue(now) {
+				t.Fatalf("%v is not a re-check run", now)
+			}
+			seen[rotateIDs(ids, rotationKey(now))[0]] = true
+		}
+		if len(seen) != n {
+			t.Errorf("n=%d: only %v came first over %d re-check runs", n, seen, n)
+		}
+	}
+}
+
+func TestRotationKeyGivesEveryIDAFrontTurnOnOrdinaryRuns(t *testing.T) {
+	for _, n := range []int{2, 3, 11, 12, 24} {
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprint(i)
+		}
+		seen := map[string]bool{}
+		runs := 0
+		for slot := int64(0); runs < n; slot++ {
+			now := time.Unix(slot*15*60, 0)
+			if endedRecheckDue(now) {
+				continue
+			}
+			runs++
+			seen[rotateIDs(ids, rotationKey(now))[0]] = true
+		}
+		if len(seen) != n {
+			t.Errorf("n=%d: only %d IDs came first over %d ordinary runs", n, len(seen), n)
+		}
 	}
 }

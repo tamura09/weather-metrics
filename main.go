@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,13 +41,18 @@ const (
 	// own timeout is 15 minutes, so waiting longer costs only Lambda time.
 	httpTimeout = 60 * time.Second
 
-	// Total time a run may spend fetching the text of alerts it has not seen
-	// before; see resolveAlerts.
+	// Total time a run may spend on /alert/{id} calls of every kind: new IDs,
+	// cached texts past their end re-fetched for an extension, and the three-hourly
+	// re-check of IDs confirmed over. With the 60-second timeout that is at
+	// most three slow lookups, which these share; see lookupAlerts.
 	alertLookupBudget = 3 * time.Minute
 	// Kept free of alert lookups at the end of an invocation: the S3 writes
 	// and the Grafana push that follow them, the push allowed the full HTTP
 	// timeout.
 	afterAlertsReserve = httpTimeout + 30*time.Second
+
+	// How long the second read of an unreadable snapshot may take.
+	snapshotRetryTimeout = 20 * time.Second
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -200,19 +206,15 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
-	alerts, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	lookup, err := a.resolveAlerts(ctx, weather, present.Alerts, now)
+	alerts := lookup.alerts
 	if err != nil {
 		// Alert text is the least important thing in the run and the only part
 		// that can cost extra billed calls, so a failure is logged and the rest
-		// of the snapshot is stored without it.
+		// of the snapshot is stored without it -- unless the stored snapshot
+		// could not be read at all (keepStored), when nothing is stored.
 		log.Printf("resolve alerts: %v", err)
 	}
-	// The history is for the dashboard's record of past warnings; losing one
-	// run's entry costs a fifteen-minute gap at worst, not the reading.
-	if err := a.archiveAlerts(ctx, alerts, now); err != nil {
-		log.Printf("archive alerts: %v", err)
-	}
-
 	snapshot := forecastSnapshot{
 		UpdatedAt:      now.UTC(),
 		Timezone:       current.Timezone,
@@ -220,9 +222,29 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		Hourly:         buildHours(hours.Data),
 		Daily:          forecastDays(dayRecords, now, a.zone),
 		Alerts:         alerts,
+		AlertsActive:   len(alerts) + lookup.unfetched,
+		EndedAlertIDs:  lookup.ended,
 	}
-	if err := a.saveForecast(ctx, snapshot); err != nil {
-		return nil, fmt.Errorf("save forecast snapshot: %w", err)
+	// The history is for the dashboard's record of past warnings; losing one
+	// run's entry costs a fifteen-minute gap at worst, not the reading.
+	if err := a.archiveAlerts(ctx, snapshot.Alerts, now); err != nil {
+		log.Printf("archive alerts: %v", err)
+	}
+	// keepStored: the stored snapshot could not be read even on a second try,
+	// so this run's alert cache was built without it. Leave the stored one in
+	// place and send no alert series rather than a count that may revive an
+	// alert already known to be over.
+	save := !lookup.keepStored
+	snapshot.alertsUnknown = lookup.keepStored
+	if !save {
+		log.Printf("forecast snapshot left as it was and alert series not sent, since it could not be read this run")
+	}
+	hoursStored := 0
+	if save {
+		hoursStored = len(snapshot.Hourly)
+		if err := a.saveForecast(ctx, snapshot); err != nil {
+			return nil, fmt.Errorf("save forecast snapshot: %w", err)
+		}
 	}
 
 	// Read back the month we just wrote to, so the derived series -- today's
@@ -238,40 +260,104 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		return nil, fmt.Errorf("remote_write to Grafana Cloud: %w", err)
 	}
 
+	// With the alert cache unreadable the count is unknown, so it is null
+	// rather than a zero that reads like "no alerts".
+	var alertsActive any = snapshot.activeAlerts()
+	if snapshot.alertsUnknown {
+		alertsActive = nil
+	}
 	return map[string]any{
 		"location":       a.location,
 		"observed_at":    reading.Time,
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
-		"hours_stored":   len(snapshot.Hourly),
-		"alerts_active":  len(snapshot.Alerts),
+		"hours_stored":   hoursStored,
+		"alerts_active":  alertsActive,
 		"series_pushed":  pushed,
-		"api_calls_made": 3, // current + one day page + one hour page
+		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
 	}, nil
 }
 
+// alertLookup is what resolveAlerts found for the IDs /current reported.
+type alertLookup struct {
+	alerts []alertDetail // in force, with text
+	// unfetched is how many IDs are presumably in force but have no text yet,
+	// because their lookup failed or did not fit in the budget.
+	unfetched int
+	// ended lists IDs /current still reports that are confirmed over: fetched
+	// text says so, or the API answered 404/410 for the ID. They are kept so
+	// later runs do not count them and fetch them again only on the
+	// three-hourly re-check runs (endedRecheckDue). A failed or skipped
+	// re-check of a cached text past its end does not put an ID here; it is
+	// counted in unfetched and tried again on the next run.
+	ended []string
+	calls int // /alert/{id} requests sent, failed ones included
+	// keepStored is set when the stored snapshot could not be read for a
+	// reason other than corruption. Its cached texts and ended IDs are still
+	// there, so this run must not overwrite them with what it rebuilt.
+	keepStored bool
+}
+
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
-// 4.0 charges for /alert/{id} like any other call, so only IDs whose text is not
-// already in the stored snapshot are fetched -- normally none.
-func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) ([]alertDetail, error) {
+// 4.0 charges for /alert/{id} like any other call, so only these are fetched:
+// IDs whose text is not in the stored snapshot, IDs whose stored text has
+// passed its end (re-checked for an extension), and, on the three-hourly
+// re-check runs (endedRecheckDue), IDs already confirmed over that /current
+// still lists -- normally none.
+func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
+	ids = uniqueIDs(ids)
 	if len(ids) == 0 {
-		return nil, nil
+		return alertLookup{}, nil
 	}
 
+	// A read that fails outright (a transient S3 error) is tried once more
+	// before any lookup, so a passing glitch costs no billed calls. Neither
+	// case below stops the run, which would leave the dashboard without
+	// metrics for as long as the alert lasts. A corrupt snapshot is treated as
+	// empty: its texts are fetched again within the budget and this run's
+	// save, the only thing that rewrites it, replaces it. One that still
+	// could not be read is intact in S3, so the run makes no lookups, does not
+	// overwrite it and sends no alert series (keepStored), leaving the alerts
+	// to the next run.
 	stored, err := a.loadForecast(ctx)
-	if err != nil {
-		return nil, err
+	if err != nil && !errors.Is(err, errUndecodable) {
+		log.Printf("read stored alerts, trying once more: %v", err)
+		// Bounded, so a hanging retry cannot eat the time the rest of the
+		// run (the month read, the push) needs.
+		retryCtx, cancel := context.WithTimeout(ctx, snapshotRetryTimeout)
+		stored, err = a.loadForecast(retryCtx)
+		cancel()
 	}
+	if errors.Is(err, errUndecodable) {
+		log.Printf("stored alerts are corrupt, fetching them again: %v", err)
+		return lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
+	}
+	if err != nil {
+		// Nothing fetched now could be saved or sent (see keepStored), so no
+		// lookups are made.
+		return alertLookup{keepStored: true}, fmt.Errorf("read stored alerts: %w", err)
+	}
+	return lookupAlerts(ctx, weather, ids, stored, now)
+}
+
+// lookupAlerts is resolveAlerts after the snapshot has been read: it sorts
+// the IDs into texts in force, ended IDs and IDs still without text, and
+// fetches what it must within the budget.
+func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, stored forecastSnapshot, now time.Time) (alertLookup, error) {
 	known := make(map[string]alertDetail, len(stored.Alerts))
 	for _, alert := range stored.Alerts {
 		known[alert.ID] = alert
+	}
+	wasEnded := make(map[string]bool, len(stored.EndedAlertIDs))
+	for _, id := range stored.EndedAlertIDs {
+		wasEnded[id] = true
 	}
 
 	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
 	// A day with many new alerts and a slow API could otherwise spend the
 	// whole invocation here and never save the forecast or push the metrics,
-	// so the lookups share one budget. An ID cut off by it is not stored and
-	// is tried again on the next run.
+	// so the lookups share one budget. An ID cut off by it is counted and
+	// tried again on the next run.
 	// The budget also ends early enough before the invocation's own deadline
 	// to leave time for saving the snapshot and pushing to Grafana after it.
 	budgetEnd := time.Now().Add(alertLookupBudget)
@@ -283,11 +369,20 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	alertCtx, cancel := context.WithDeadline(ctx, budgetEnd)
 	defer cancel()
 
+	var result alertLookup
 	var resolved []alertDetail
 	var unknown []string
-	for _, id := range uniqueIDs(ids) {
-		if alert, ok := known[id]; ok {
+	for _, id := range ids {
+		// A cached text past its end is fetched again rather than taken as
+		// over: the issuer may have extended the alert under the same ID.
+		if alert, ok := known[id]; ok && !alertOver(alert, now) {
 			resolved = append(resolved, alert)
+			continue
+		}
+		// An ID confirmed over is not fetched again, except every three hours in
+		// case the issuer extended it under the same ID afterwards.
+		if wasEnded[id] && !endedRecheckDue(now) {
+			result.ended = append(result.ended, id)
 			continue
 		}
 		unknown = append(unknown, id)
@@ -295,32 +390,80 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 
 	// The API lists IDs in the same order every run, so IDs that keep timing
 	// out at the front would use up the budget each time and starve the rest.
-	// Starting from a different ID each fifteen-minute slot gives every one
-	// its turn at the front without keeping any state between runs.
+	// Rotating the starting ID (see rotationKey) gives every one turns at the
+	// front over time without keeping any state between runs.
 	var failures []string
 	// A lookup only starts if it can wait out the full HTTP timeout before the
 	// budget ends; one cut off part-way may still have been billed and would
 	// leave nothing to store.
-	deadline, _ := alertCtx.Deadline()
-	order := rotateIDs(unknown, now)
+	order := rotateIDs(unknown, rotationKey(now))
 	for i, id := range order {
-		if time.Until(deadline) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(deadline).Round(time.Second), httpTimeout, len(order)-i))
+		if time.Until(budgetEnd) < httpTimeout {
+			// A re-check of an ID already confirmed over that does not
+			// happen leaves it ended; anything else is counted and retried.
+			for _, rest := range order[i:] {
+				if wasEnded[rest] {
+					result.ended = append(result.ended, rest)
+				} else {
+					result.unfetched++
+				}
+			}
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
 			break
 		}
+		result.calls++
 		alert, err := weather.alert(alertCtx, id)
 		if err != nil {
+			// A 404 or 410 confirms the alert is gone, so stop paying for it;
+			// that is an answer, not a failure. Anything else (a timeout, a
+			// 5xx) may pass, so the ID is counted and tried again on the next
+			// run, except that a failed re-check of an ID already
+			// confirmed over leaves it ended.
+			if isGone(err) {
+				result.ended = append(result.ended, id)
+				continue
+			}
 			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			if wasEnded[id] {
+				result.ended = append(result.ended, id)
+			} else {
+				result.unfetched++
+			}
+			continue
+		}
+		if alertOver(alert, now) {
+			result.ended = append(result.ended, id)
 			continue
 		}
 		resolved = append(resolved, alert)
 	}
 
-	merged := mergeAlerts(nil, resolved, now)
+	result.alerts = mergeAlerts(nil, resolved, now)
+	sort.Strings(result.ended)
+
 	if len(failures) > 0 {
-		return merged, errors.New(strings.Join(failures, "; "))
+		return result, errors.New(strings.Join(failures, "; "))
 	}
-	return merged, nil
+	return result, nil
+}
+
+// endedRecheckSlots is how many fifteen-minute slots apart the re-checks of
+// IDs already confirmed over are: every three hours. Each such ID costs a
+// call per re-check while /current lists it, 8 a day per location, and the
+// three locations' scheduled runs already use 864 of the 1,000 free calls; an
+// hourly re-check (24 a day) would put six lingering IDs over the limit.
+const endedRecheckSlots = 12
+
+// endedRecheckDue reports whether this run is one of the runs, every three
+// hours, that re-check IDs already confirmed over.
+func endedRecheckDue(now time.Time) bool {
+	return (now.Unix()/(15*60))%endedRecheckSlots == 0
+}
+
+// alertOver reports whether an alert's announced end has passed, the same
+// test mergeAlerts uses to drop it.
+func alertOver(alert alertDetail, now time.Time) bool {
+	return alert.End > 0 && time.Unix(alert.End, 0).Before(now)
 }
 
 // uniqueIDs drops empty and repeated IDs, keeping the order they came in.
@@ -337,13 +480,27 @@ func uniqueIDs(ids []string) []string {
 	return unique
 }
 
-// rotateIDs returns ids starting from an offset that advances once per
-// fifteen-minute slot of now.
-func rotateIDs(ids []string, now time.Time) []string {
+// rotationKey picks where this run's lookups start. Re-check runs (every
+// endedRecheckSlots-th slot, the only runs where ended IDs join the lookups)
+// and ordinary runs each count up through consecutive integers of their own:
+// the n-th re-check run gets n, the n-th ordinary run gets n. Using the raw
+// slot instead would give either kind of run only some offsets -- multiples
+// of gcd(endedRecheckSlots, len) on re-check runs, and never a multiple of
+// endedRecheckSlots on ordinary ones -- and skip some IDs for good.
+func rotationKey(now time.Time) int64 {
+	slot := now.Unix() / (15 * 60)
+	if endedRecheckDue(now) {
+		return slot / endedRecheckSlots
+	}
+	return slot - slot/endedRecheckSlots - 1
+}
+
+// rotateIDs returns ids starting from an offset that advances with key.
+func rotateIDs(ids []string, key int64) []string {
 	if len(ids) < 2 {
 		return ids
 	}
-	offset := int((now.Unix() / (15 * 60)) % int64(len(ids)))
+	offset := int(key % int64(len(ids)))
 	return append(append([]string{}, ids[offset:]...), ids[:offset]...)
 }
 

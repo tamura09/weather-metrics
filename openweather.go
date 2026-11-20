@@ -17,7 +17,8 @@ import (
 // call budget, which is the binding constraint here: the "One Call by Call"
 // subscription gives 1,000 calls a day free and bills every page beyond it --
 // including each `next` page of a paginated timeline. So a collect run makes
-// exactly three calls (current, one page of days, one page of hours) and the
+// three timeline calls (current, one page of days, one page of hours), plus
+// any /alert/{id} lookups (see alert), and the
 // day page is deliberately asked for starting two days back, because the same
 // endpoint serves settled history and forecast: re-reading yesterday replaces
 // the forecast we stored for it with what actually happened.
@@ -237,8 +238,10 @@ func (o *openWeather) timeline(ctx context.Context, endpoint string, query url.V
 }
 
 // alert fetches one alert's text. 4.0 embeds only IDs in the weather payloads,
-// so this is called just for IDs the archive has not already stored -- which on
-// an ordinary day is none of them.
+// so this is called just for IDs the archive has not already stored, IDs whose
+// stored text has passed its end, and, every three hours, IDs already
+// confirmed over that /current still lists -- which on an ordinary day is none
+// of them.
 func (o *openWeather) alert(ctx context.Context, id string) (alertDetail, error) {
 	query := url.Values{}
 	query.Set("appid", o.apiKey)
@@ -295,13 +298,16 @@ func (o *openWeather) get(ctx context.Context, endpoint string, query url.Values
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The status decides what the caller does (a 404 ends an alert), so it
+		// is kept even if the body could not be read in full; the body is
+		// only for diagnosis. The key and coordinates are in the query
+		// string, so the URL is not safe to put in an error that lands in
+		// CloudWatch Logs.
+		return nil, &statusError{path: parsed.Path, code: resp.StatusCode, body: truncate(body, 500)}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// The key and coordinates are in the query string, so the URL is not
-		// safe to put in an error that lands in CloudWatch Logs.
-		return nil, fmt.Errorf("OpenWeather %s returned %d: %s", parsed.Path, resp.StatusCode, truncate(body, 500))
 	}
 	return body, nil
 }
@@ -323,4 +329,23 @@ func truncate(body []byte, limit int) string {
 		return text
 	}
 	return text[:limit] + "..."
+}
+
+// statusError is a non-2xx answer from OpenWeather. Its message carries the
+// path only: the key and coordinates are in the query string.
+type statusError struct {
+	path string
+	code int
+	body string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("OpenWeather %s returned %d: %s", e.path, e.code, e.body)
+}
+
+// isGone reports whether err says the resource does not exist (404 or 410),
+// which for /alert/{id} means the alert is no longer there to fetch.
+func isGone(err error) bool {
+	var status *statusError
+	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }

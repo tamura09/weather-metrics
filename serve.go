@@ -486,7 +486,7 @@ func (a *app) servedSummary(ctx context.Context, now time.Time) (weatherSummaryR
 // summarize touches no S3, so it can be tested directly against synthetic
 // readings and snapshots.
 func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Location, now time.Time) weatherSummaryRow {
-	summary := weatherSummaryRow{AlertsActive: len(snapshot.Alerts)}
+	summary := weatherSummaryRow{AlertsActive: snapshot.activeAlerts()}
 	if len(readings) == 0 {
 		return summary
 	}
