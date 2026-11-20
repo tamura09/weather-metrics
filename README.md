@@ -276,11 +276,12 @@ because re-fetching costs billed calls. When a run's daily or hourly timeline
 fails, the previous run's copy of that forecast is carried forward too;
 `daily_updated_at` and `hourly_updated_at` say when each was last actually
 fetched, so a forecast older than `updated_at` shows as such (the collect
-result also reports `daily_fetched` and `hourly_fetched`). If the snapshot
-cannot be read when it is needed -- on either of the alert cache's two
-attempts, or to stand in for a failed timeline -- that run does not write it
-at all, so the forecast stays as the previous run left them until the next
-run.
+result also reports `daily_fetched` and `hourly_fetched`). Each run reads the
+previous snapshot once (retrying once on an S3 error) for both purposes. If it
+still cannot be read, that run makes no alert lookups and does not write the
+snapshot at all, so the forecast and alert cache stay as the previous run left
+them until the next run; a corrupt snapshot is instead started afresh and
+replaced.
 
 ## Retention: two weeks dense, hourly for good
 
