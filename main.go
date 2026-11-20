@@ -417,9 +417,9 @@ func (r *alertLookup) noText(id string, known map[string]alertDetail) {
 
 // carryAlertCache merges the alert cache of a snapshot this run could not
 // read at first into the one it built, for the IDs /current reports now
-// (ids). What the run itself decided wins: a stored text is taken only for an
-// ID the run left without text, and only if it is not past its end; a stored
-// ended ID only for an ID the run did not get text for. IDs /current no longer
+// (ids). What the run itself decided wins: for an ID the run left without
+// text, a stored text is taken, or the ID is taken as ended if that text is
+// past its end, matching noText; a stored ended ID likewise. IDs /current no longer
 // reports are dropped. The returned count is alerts plus IDs still without
 // text, as AlertsActive.
 func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time) ([]alertDetail, []string, int) {
@@ -438,10 +438,17 @@ func carryAlertCache(stored, built forecastSnapshot, ids []string, now time.Time
 	alerts := append([]alertDetail{}, built.Alerts...)
 	ended := append([]string{}, built.EndedAlertIDs...)
 	for _, alert := range stored.Alerts {
-		if current[alert.ID] && !decided[alert.ID] && !alertOver(alert, now) {
-			alerts = append(alerts, alert)
-			decided[alert.ID] = true
+		if !current[alert.ID] || decided[alert.ID] {
+			continue
 		}
+		// As in noText: a cached text past its end that the run could not
+		// re-check stands, so the ID is taken as ended.
+		if alertOver(alert, now) {
+			ended = append(ended, alert.ID)
+		} else {
+			alerts = append(alerts, alert)
+		}
+		decided[alert.ID] = true
 	}
 	for _, id := range stored.EndedAlertIDs {
 		if current[id] && !decided[id] {

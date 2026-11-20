@@ -124,7 +124,7 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 			{ID: "unfetched", End: future},                 // run had no text: take the cached one
 			{ID: "lifted", End: future},                    // /current no longer lists it
 			{ID: "ended-now", End: future},                 // run found it over: run wins
-			{ID: "stale", End: now.Add(-time.Hour).Unix()}, // past its end: not revived
+			{ID: "stale", End: now.Add(-time.Hour).Unix()}, // past its end: taken as ended
 		},
 		EndedAlertIDs: []string{"ended-before", "ended-gone", "new"},
 	}
@@ -142,11 +142,11 @@ func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
 	if strings.Join(sorted(got), ",") != "new,unfetched" {
 		t.Errorf("alerts = %v, want new, unfetched", got)
 	}
-	if strings.Join(ended, ",") != "ended-before,ended-now" {
-		t.Errorf("ended = %v, want ended-before, ended-now", ended)
+	if strings.Join(ended, ",") != "ended-before,ended-now,stale" {
+		t.Errorf("ended = %v, want ended-before, ended-now, stale", ended)
 	}
-	// new, unfetched with text; stale and no-text still without.
-	if active != 4 {
-		t.Errorf("active = %d, want 4", active)
+	// new and unfetched with text; no-text still without.
+	if active != 3 {
+		t.Errorf("active = %d, want 3", active)
 	}
 }
