@@ -27,7 +27,8 @@ available live and years later.
 
 One Call 4.0 is on the "One Call by Call" subscription: **1,000 calls a day
 free**, pay-per-call above it, and — unlike 3.0 — every page of a paginated
-timeline is its own billed call. A scheduled run therefore makes exactly three:
+timeline is its own billed call. A scheduled run therefore makes three, plus
+any `/alert/{id}` calls described below:
 
 | Call | Returns | Why one page is enough |
 | --- | --- | --- |
@@ -45,8 +46,9 @@ draws on a separate quota.
 stored snapshot, or whose cached text is past its end (to catch an
 extension), and that are not already known to be over (`ended_alert_ids`,
 kept while `/current` still lists them) -- except that IDs known to be over
-are re-checked every three hours. On a day with no weather warnings
-that is none of them. If an alert cannot be decoded it is never stored, so it
+are re-checked every three hours. On a day when `/current` lists no alert IDs
+at all that is none of them; an ended ID that `/current` keeps listing still
+costs its three-hourly re-check. If an alert cannot be decoded it is never stored, so it
 is fetched again on later runs while it is still in force; a `decode alert`
 line in the logs means calls are being spent that way. All these lookups share
 a three-minute budget per run, and the ID they start from rotates (by
