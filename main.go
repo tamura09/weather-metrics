@@ -42,7 +42,7 @@ const (
 	httpTimeout = 60 * time.Second
 
 	// Total time a run may spend on /alert/{id} calls of every kind: new IDs,
-	// cached texts past their end re-fetched for an extension, and the hourly
+	// cached texts past their end re-fetched for an extension, and the three-hourly
 	// re-check of IDs confirmed over. With the 60-second timeout that is at
 	// most three slow lookups, which these share; see lookupAlerts.
 	alertLookupBudget = 3 * time.Minute
@@ -370,7 +370,7 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 			resolved = append(resolved, alert)
 			continue
 		}
-		// An ID confirmed over is not fetched again, except once an hour in
+		// An ID confirmed over is not fetched again, except every three hours in
 		// case the issuer extended it under the same ID afterwards.
 		if wasEnded[id] && !endedRecheckDue(now) {
 			result.ended = append(result.ended, id)
@@ -390,7 +390,7 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	order := rotateIDs(unknown, rotationKey(now))
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
-			// An hourly re-check of an ID already confirmed over that does not
+			// A re-check of an ID already confirmed over that does not
 			// happen leaves it ended; anything else is counted and retried.
 			for _, rest := range order[i:] {
 				if wasEnded[rest] {
@@ -408,7 +408,7 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 			// A 404 or 410 confirms the alert is gone, so stop paying for it;
 			// that is an answer, not a failure. Anything else (a timeout, a
 			// 5xx) may pass, so the ID is counted and tried again on the next
-			// run, except that a failed hourly re-check of an ID already
+			// run, except that a failed re-check of an ID already
 			// confirmed over leaves it ended.
 			if isGone(err) {
 				result.ended = append(result.ended, id)
@@ -438,10 +438,17 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	return result, nil
 }
 
-// endedRecheckDue reports whether this run is the one each hour (the run in
-// the first fifteen-minute slot) that re-checks IDs already confirmed over.
+// endedRecheckSlots is how many fifteen-minute slots apart the re-checks of
+// IDs already confirmed over are: every three hours. Each such ID costs a
+// call per re-check while /current lists it, 8 a day per location, and the
+// three locations' scheduled runs already use 864 of the 1,000 free calls; an
+// hourly re-check (24 a day) would put six lingering IDs over the limit.
+const endedRecheckSlots = 12
+
+// endedRecheckDue reports whether this run is one of the runs, every three
+// hours, that re-check IDs already confirmed over.
 func endedRecheckDue(now time.Time) bool {
-	return (now.Unix()/(15*60))%4 == 0
+	return (now.Unix()/(15*60))%endedRecheckSlots == 0
 }
 
 // alertOver reports whether an alert's announced end has passed, the same
@@ -465,14 +472,14 @@ func uniqueIDs(ids []string) []string {
 }
 
 // rotationKey picks where this run's lookups start. It advances once per
-// fifteen-minute slot, but on the hourly re-check runs -- the only runs where
-// ended IDs join the lookups -- it advances once per hour instead: those runs
-// fall on every fourth slot, and a slot-based offset would then only take
-// multiples of gcd(4, n) and skip some IDs for good.
+// fifteen-minute slot, but on the re-check runs -- the only runs where ended
+// IDs join the lookups -- it advances once per re-check instead: those runs
+// fall on every endedRecheckSlots-th slot, and a slot-based offset would then
+// only take multiples of gcd(endedRecheckSlots, n) and skip some IDs for good.
 func rotationKey(now time.Time) int64 {
 	slot := now.Unix() / (15 * 60)
 	if endedRecheckDue(now) {
-		return slot / 4
+		return slot / endedRecheckSlots
 	}
 	return slot
 }

@@ -45,12 +45,12 @@ draws on a separate quota.
 stored snapshot, or whose cached text is past its end (to catch an
 extension), and that are not already known to be over (`ended_alert_ids`,
 kept while `/current` still lists them) -- except that IDs known to be over
-are re-checked once an hour. On a day with no weather warnings
+are re-checked every three hours. On a day with no weather warnings
 that is none of them. If an alert cannot be decoded it is never stored, so it
 is fetched again on later runs while it is still in force; a `decode alert`
 line in the logs means calls are being spent that way. All these lookups share
 a three-minute budget per run, and the ID they start from rotates (by
-fifteen-minute slot, and by hour on the hourly re-check runs), so every ID
+fifteen-minute slot, and by re-check on the three-hourly re-check runs), so every ID
 gets turns at the front over time but not necessarily on consecutive runs;
 with several of them a given one is fetched only when its turn comes within
 the budget. How an alert without text is counted and archived is described with
@@ -218,8 +218,8 @@ can exceed the rows of `?resource=alerts` and the `weather_alert` series. An ID
 is left out of the count only when its end is confirmed: text fetched for it
 says its announced end has passed, or the API answers 404/410 for it. Such IDs
 go into `ended_alert_ids` while `/current` keeps listing
-them, so they are not counted again and are fetched again only in the hourly
-re-check below. An ID with no text at all is counted
+them, so they are not counted again and are fetched again only in the
+three-hourly re-check below. An ID with no text at all is counted
 even if it has in fact ended, since nothing says so yet. A cached text that has
 passed its end is fetched again before the ID is taken as over, in case the
 alert was extended; if that fetch fails (other than 404/410) or does not fit
@@ -228,12 +228,15 @@ per run. Unfetched texts are tried again on a
 later run, and such an alert is not written to `alerts/` until its text has
 been fetched: its record starts, and `first_seen` is set, on the first run that
 got the text, and an alert lifted before then never appears in the history.
-An ID in `ended_alert_ids` is fetched again only on the run in the first
-fifteen-minute slot of each hour (a manual run in that slot re-checks too) while
-`/current` lists it, to save calls, so an alert extended under the same ID
-after being found over is picked up by the first hourly re-check that fetches
+An ID in `ended_alert_ids` is fetched again only every three hours (on the run
+in the first fifteen-minute slot of 00:00, 03:00, ... UTC; a manual run in that
+slot re-checks too) while `/current` lists it, so an alert extended under the
+same ID after being found over is picked up by the first re-check that fetches
 it successfully. A re-check that fails (other than 404/410) or does not fit the
-budget leaves the ID ended until the next hour's. If the stored snapshot cannot be
+budget leaves the ID ended until the next one. Each lingering ended ID costs 8
+calls a day per location; with the scheduled runs at 864 of the 1,000 free
+calls, about 17 such ID-days fit, and an hourly re-check (24 a day each) would
+spill into paid calls with six. If the stored snapshot cannot be
 read at all (a transient S3 error), the run reads it once more; if that fails
 too, the run makes no alert lookups, does not write the snapshot, forecast
 included, and sends no alert series, leaving the alerts to the next run. If it

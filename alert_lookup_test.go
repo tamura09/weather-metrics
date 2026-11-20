@@ -45,7 +45,7 @@ func alertServer(t *testing.T, texts map[string]alertDetail) (*openWeather, func
 }
 
 func TestLookupAlertsSortsIDs(t *testing.T) {
-	// Not the hourly slot that re-checks IDs already confirmed over.
+	// Not a slot that re-checks IDs already confirmed over.
 	now := time.Unix(1_800_000_000, 0).Add(15 * time.Minute)
 	if endedRecheckDue(now) {
 		t.Fatal("test time falls in the re-check slot")
@@ -128,8 +128,8 @@ func sorted(ids []string) []string {
 	return out
 }
 
-func TestLookupAlertsRechecksEndedIDsHourly(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
+func TestLookupAlertsRechecksEndedIDsPeriodically(t *testing.T) {
+	now := time.Unix(0, 0)
 	if !endedRecheckDue(now) {
 		t.Fatal("test time is not the re-check slot")
 	}
@@ -150,8 +150,8 @@ func TestLookupAlertsRechecksEndedIDsHourly(t *testing.T) {
 	}
 }
 
-func TestLookupAlertsFailedHourlyRecheckLeavesIDEnded(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
+func TestLookupAlertsFailedRecheckLeavesIDEnded(t *testing.T) {
+	now := time.Unix(0, 0)
 	weather, _ := alertServer(t, map[string]alertDetail{}) // 500 for everything
 	stored := forecastSnapshot{EndedAlertIDs: []string{"ended-a", "ended-b"}}
 

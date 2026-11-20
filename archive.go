@@ -127,7 +127,7 @@ type forecastSnapshot struct {
 	// EndedAlertIDs are IDs /current still lists although they are confirmed
 	// over: their fetched text says so, or the API answered 404/410. Kept only
 	// while /current lists them; they are not counted, and are fetched again
-	// only in the hourly re-check (endedRecheckDue), a failed re-check
+	// only in the three-hourly re-check (endedRecheckDue), a failed re-check
 	// leaving them here.
 	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
 	// alertsUnknown is set, for this run only, when the alert cache could not

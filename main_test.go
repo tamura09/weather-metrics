@@ -639,9 +639,9 @@ func TestRotationKeyGivesEveryIDAFrontTurnOnRecheckRuns(t *testing.T) {
 			ids[i] = fmt.Sprint(i)
 		}
 		seen := map[string]bool{}
-		// n hourly re-check runs.
-		for hour := 0; hour < n; hour++ {
-			now := time.Unix(0, 0).Add(time.Duration(hour) * time.Hour)
+		// n consecutive re-check runs.
+		for k := 0; k < n; k++ {
+			now := time.Unix(0, 0).Add(time.Duration(k*endedRecheckSlots) * 15 * time.Minute)
 			if !endedRecheckDue(now) {
 				t.Fatalf("%v is not a re-check run", now)
 			}
