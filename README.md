@@ -204,9 +204,8 @@ the API does not return a tendency.
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
 
-`alerts_active` in the snapshot is the number of alerts in force: those in
-`alerts` plus any ID `/current` reported whose text could not be fetched that
-run (an alert already past its announced end counts in neither), so
+`alerts_active` in the snapshot is the number of distinct alert IDs `/current`
+reported, including any whose text could not be fetched that run, so
 `weather_alerts_active` and the `?resource=summary` count can exceed the rows of
 `?resource=alerts` and the `weather_alert` series. Those texts are fetched
 again on a later run. Such an alert is not written to `alerts/` either until
