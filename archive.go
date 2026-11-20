@@ -122,9 +122,11 @@ type forecastSnapshot struct {
 	// alert already past its end is in neither. Snapshots written before it
 	// existed read as zero.
 	AlertsActive int `json:"alerts_active,omitempty"`
-	// EndedAlertIDs are IDs /current still lists although their text says the
-	// alert is over. Kept only while /current lists them, so they are neither
-	// fetched nor counted again.
+	// EndedAlertIDs are IDs /current still lists although they are confirmed
+	// over: their fetched text says so, or the API answered 404/410. Kept only
+	// while /current lists them; they are not counted, and are fetched again
+	// only in the hourly re-check (endedRecheckDue), a failed re-check
+	// leaving them here.
 	EndedAlertIDs []string `json:"ended_alert_ids,omitempty"`
 }
 

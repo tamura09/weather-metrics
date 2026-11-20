@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -595,7 +596,7 @@ func TestRotateIDsGivesEachIDTheFront(t *testing.T) {
 	base := time.Unix(0, 0)
 	seen := map[string]bool{}
 	for slot := 0; slot < len(ids); slot++ {
-		got := rotateIDs(ids, base.Add(time.Duration(slot)*15*time.Minute))
+		got := rotateIDs(ids, rotationKey(base.Add(time.Duration(slot)*15*time.Minute)))
 		if len(got) != len(ids) {
 			t.Fatalf("slot %d: got %v", slot, got)
 		}
@@ -628,5 +629,26 @@ func TestUniqueIDsDropsEmptyAndRepeatedKeepingOrder(t *testing.T) {
 	want := []string{"b", "a", "c"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("uniqueIDs = %v, want %v", got, want)
+	}
+}
+
+func TestRotationKeyGivesEveryIDAFrontTurnOnRecheckRuns(t *testing.T) {
+	for _, n := range []int{2, 3, 4, 6} {
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprint(i)
+		}
+		seen := map[string]bool{}
+		// n hourly re-check runs.
+		for hour := 0; hour < n; hour++ {
+			now := time.Unix(0, 0).Add(time.Duration(hour) * time.Hour)
+			if !endedRecheckDue(now) {
+				t.Fatalf("%v is not a re-check run", now)
+			}
+			seen[rotateIDs(ids, rotationKey(now))[0]] = true
+		}
+		if len(seen) != n {
+			t.Errorf("n=%d: only %v came first over %d re-check runs", n, seen, n)
+		}
 	}
 }

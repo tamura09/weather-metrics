@@ -377,7 +377,7 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	// A lookup only starts if it can wait out the full HTTP timeout before the
 	// budget ends; one cut off part-way may still have been billed and would
 	// leave nothing to store.
-	order := rotateIDs(unknown, now)
+	order := rotateIDs(unknown, rotationKey(now))
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
 			// An hourly re-check of an ID already confirmed over that does not
@@ -501,13 +501,25 @@ func uniqueIDs(ids []string) []string {
 	return unique
 }
 
-// rotateIDs returns ids starting from an offset that advances once per
-// fifteen-minute slot of now.
-func rotateIDs(ids []string, now time.Time) []string {
+// rotationKey picks where this run's lookups start. It advances once per
+// fifteen-minute slot, but on the hourly re-check runs -- the only runs where
+// ended IDs join the lookups -- it advances once per hour instead: those runs
+// fall on every fourth slot, and a slot-based offset would then only take
+// multiples of gcd(4, n) and skip some IDs for good.
+func rotationKey(now time.Time) int64 {
+	slot := now.Unix() / (15 * 60)
+	if endedRecheckDue(now) {
+		return slot / 4
+	}
+	return slot
+}
+
+// rotateIDs returns ids starting from an offset that advances with key.
+func rotateIDs(ids []string, key int64) []string {
 	if len(ids) < 2 {
 		return ids
 	}
-	offset := int((now.Unix() / (15 * 60)) % int64(len(ids)))
+	offset := int(key % int64(len(ids)))
 	return append(append([]string{}, ids[offset:]...), ids[:offset]...)
 }
 
