@@ -371,8 +371,8 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 
 	// The API lists IDs in the same order every run, so IDs that keep timing
 	// out at the front would use up the budget each time and starve the rest.
-	// Starting from a different ID each fifteen-minute slot gives every one
-	// its turn at the front without keeping any state between runs.
+	// Rotating the starting ID (see rotationKey) gives every one turns at the
+	// front over time without keeping any state between runs.
 	var failures []string
 	// A lookup only starts if it can wait out the full HTTP timeout before the
 	// budget ends; one cut off part-way may still have been billed and would

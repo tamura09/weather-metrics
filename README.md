@@ -48,9 +48,11 @@ kept while `/current` still lists them). On a day with no weather warnings
 that is none of them. If an alert cannot be decoded it is never stored, so it
 is fetched again on later runs while it is still in force; a `decode alert`
 line in the logs means calls are being spent that way. All these lookups share
-a three-minute budget per run and start from a different ID each run, so with
-several of them a given one is fetched only when its turn comes within the
-budget. How an alert without text is counted and archived is described with
+a three-minute budget per run, and the ID they start from rotates (by
+fifteen-minute slot, and by hour on the hourly re-check runs), so every ID
+gets turns at the front over time but not necessarily on consecutive runs;
+with several of them a given one is fetched only when its turn comes within
+the budget. How an alert without text is counted and archived is described with
 the archive layout under [The archive](#the-archive) below.
 
 A failed run spends calls too: `/current` has already been paid for by the
@@ -257,8 +259,12 @@ Daily records are keyed on the date, and a record that has settled is never
 replaced by a forecast for the same date — which is what lets a backfill walk
 forward past today without undoing history.
 
-`forecast.json` is replaced whole on every run, except for alert text, which is
-carried across runs because re-fetching it costs a billed call.
+`forecast.json` is rewritten on every run, except that the alert cache --
+`alerts` texts, `ended_alert_ids`, and the `alerts_active` count derived from
+them -- is carried across runs because re-fetching costs billed calls. If the
+snapshot cannot be read on either of a run's two attempts, that run does not
+write it at all, so the hourly and daily forecast stay as the previous run
+left them until the next run.
 
 ## Retention: two weeks dense, hourly for good
 
