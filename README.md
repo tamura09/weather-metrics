@@ -210,7 +210,7 @@ the API does not return a tendency.
 ```text
 <prefix>observations/2026-08.json   { "month": "2026-08", "readings": [ { "time": ..., "temp": ..., ... } ] }   fifteen-minute for two weeks, then hourly
 <prefix>daily/2026.json             { "year": "2026", "days": [ { "date": "2026-08-08", "settled": false, "temp_max": ..., ... } ] }
-<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "daily": [...], "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
+<prefix>forecast.json               { "updated_at": ..., "hourly": [...], "hourly_updated_at": ..., "daily": [...], "daily_updated_at": ..., "alerts": [...], "alerts_active": 2, "ended_alert_ids": [...] }
 <prefix>alerts/2026.json            { "year": "2026", "alerts": [ { "id": ..., "event": ..., "start": ..., "first_seen": ..., "last_seen": ... } ] }
 ```
 
@@ -272,9 +272,14 @@ forward past today without undoing history.
 
 `forecast.json` is rewritten on every run, with the alert cache -- `alerts`
 texts and `ended_alert_ids` -- read from the previous one and carried forward,
-because re-fetching costs billed calls. If the snapshot cannot be read on
-either of a run's two attempts, that run does not write it at all, so the
-hourly and daily forecast stay as the previous run left them until the next
+because re-fetching costs billed calls. When a run's daily or hourly timeline
+fails, the previous run's copy of that forecast is carried forward too;
+`daily_updated_at` and `hourly_updated_at` say when each was last actually
+fetched, so a forecast older than `updated_at` shows as such (the collect
+result also reports `daily_fetched` and `hourly_fetched`). If the snapshot
+cannot be read when it is needed -- on either of the alert cache's two
+attempts, or to stand in for a failed timeline -- that run does not write it
+at all, so the forecast stays as the previous run left them until the next
 run.
 
 ## Retention: two weeks dense, hourly for good

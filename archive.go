@@ -107,16 +107,23 @@ type yearDays struct {
 }
 
 // forecastSnapshot is what the dashboard's forward-looking panels read. It is
-// replaced whole on every run rather than merged, because a superseded forecast
-// is not worth keeping -- except for alerts, whose text costs an extra billed
-// call to fetch and so is carried across runs.
+// rewritten on every run, mostly from what that run fetched. Carried across
+// runs are the alert cache (alert text costs an extra billed call to fetch)
+// and, for a run whose daily or hourly timeline failed, the previous run's
+// copy of that forecast; DailyUpdatedAt and HourlyUpdatedAt say when each
+// was last actually fetched.
 type forecastSnapshot struct {
-	UpdatedAt      time.Time     `json:"updated_at"`
-	Timezone       string        `json:"timezone"`
-	TimezoneOffset int           `json:"timezone_offset"`
-	Hourly         []hourRecord  `json:"hourly"`
-	Daily          []dayRecord   `json:"daily"`
-	Alerts         []alertDetail `json:"alerts"`
+	UpdatedAt      time.Time    `json:"updated_at"`
+	Timezone       string       `json:"timezone"`
+	TimezoneOffset int          `json:"timezone_offset"`
+	Hourly         []hourRecord `json:"hourly"`
+	Daily          []dayRecord  `json:"daily"`
+	// When Hourly and Daily were last fetched from OpenWeather. They lag
+	// UpdatedAt when a run kept the previous copy; zero in snapshots written
+	// before these existed.
+	HourlyUpdatedAt time.Time     `json:"hourly_updated_at,omitzero"`
+	DailyUpdatedAt  time.Time     `json:"daily_updated_at,omitzero"`
+	Alerts          []alertDetail `json:"alerts"`
 	// AlertsActive is how many alerts are in force: those in Alerts plus the
 	// IDs /current reported whose text could not be fetched this run. An
 	// alert confirmed over (fetched text says it has ended, or the API
