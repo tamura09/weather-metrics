@@ -26,7 +26,8 @@ import (
 //	observations/YYYY-MM.json  one record per collect run for two weeks, then
 //	                           one per clock hour (see retention.go)
 //	daily/YYYY.json            one record per date, rewritten as a date settles
-//	forecast.json              latest snapshot, replaced wholesale each run
+//	forecast.json              latest snapshot, rewritten each run; the alert cache and
+//	                           a failed timeline's forecast carry over (see forecastSnapshot)
 //	alerts/YYYY.json           one record per alert ID, updated only by runs
 //	                           that see an alert (see alerts.go)
 const (
