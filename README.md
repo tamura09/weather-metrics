@@ -230,8 +230,9 @@ within the budget. When the object could not be read at all (a transient S3
 error), the run reads it once more before saving and carries its cached texts
 and `ended_alert_ids` into the new snapshot; if that read fails too, the
 snapshot, forecast included, is left as it was for that run. When it is corrupt, the run's save
-replaces it: `ended_alert_ids` starts over, and an ended alert whose re-fetch
-fails then counts as active until `/current` drops it. Snapshots written
+replaces it: `ended_alert_ids` starts over, and an ended alert whose fetch
+fails is counted as active, and tried again on later runs, until a fetched
+text shows it is over or `/current` drops it. Snapshots written
 before `alerts_active` existed fall back to the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just

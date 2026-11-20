@@ -237,7 +237,9 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 	if err := a.archiveAlerts(ctx, snapshot.Alerts, now); err != nil {
 		log.Printf("archive alerts: %v", err)
 	}
+	hoursStored := 0
 	if save {
+		hoursStored = len(snapshot.Hourly)
 		if err := a.saveForecast(ctx, snapshot); err != nil {
 			return nil, fmt.Errorf("save forecast snapshot: %w", err)
 		}
@@ -261,7 +263,7 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		"observed_at":    reading.Time,
 		"temp":           reading.Temp,
 		"days_archived":  len(dayRecords),
-		"hours_stored":   len(snapshot.Hourly),
+		"hours_stored":   hoursStored,
 		"alerts_active":  snapshot.activeAlerts(),
 		"series_pushed":  pushed,
 		"api_calls_made": 3 + lookup.calls, // current + one day page + one hour page + alert texts
@@ -288,9 +290,10 @@ type alertLookup struct {
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
-// 4.0 charges for /alert/{id} like any other call, so only IDs whose text is not
-// already in the stored snapshot, and not already known to be over, are
-// fetched -- normally none.
+// 4.0 charges for /alert/{id} like any other call, so only IDs not already
+// known to be over are fetched, and of those only the ones whose text is not
+// in the stored snapshot or whose stored text has passed its end (re-checked
+// for an extension) -- normally none.
 func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []string, now time.Time) (alertLookup, error) {
 	ids = uniqueIDs(ids)
 	if len(ids) == 0 {

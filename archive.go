@@ -345,7 +345,8 @@ func sameDays(left, right []dayRecord) bool {
 }
 
 // mergeAlerts keeps the text of alerts already fetched and drops any that have
-// expired, so /alert/{id} is called once per alert rather than once per run.
+// expired, so /alert/{id} is called once per alert rather than once per run,
+// plus once more if the alert is still listed after its cached end.
 func mergeAlerts(existing, incoming []alertDetail, now time.Time) []alertDetail {
 	byID := make(map[string]alertDetail, len(existing)+len(incoming))
 	for _, alert := range existing {
