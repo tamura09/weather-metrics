@@ -253,6 +253,10 @@ func (a *app) saveForecast(ctx context.Context, snapshot forecastSnapshot) error
 
 // loadJSON reports found=false for a key that is not there yet, which is the
 // normal state for a month or year nothing has been written to.
+// errUndecodable marks a stored object that was read but is not valid JSON
+// for its type, as opposed to one that could not be read at all.
+var errUndecodable = errors.New("decode")
+
 func (a *app) loadJSON(ctx context.Context, key string, into any) (bool, error) {
 	out, err := a.objects.GetObject(ctx, &s3.GetObjectInput{Bucket: &a.bucket, Key: &key})
 	if err != nil {
@@ -268,7 +272,7 @@ func (a *app) loadJSON(ctx context.Context, key string, into any) (bool, error) 
 		return false, err
 	}
 	if err := json.Unmarshal(body, into); err != nil {
-		return false, fmt.Errorf("decode %s: %w", key, err)
+		return false, fmt.Errorf("%w %s: %w", errUndecodable, key, err)
 	}
 	return true, nil
 }

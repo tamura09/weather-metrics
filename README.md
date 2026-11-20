@@ -225,8 +225,12 @@ got the text, and an alert lifted before then never appears in the history.
 An ID in `ended_alert_ids` is not fetched again while `/current` lists it, to
 save calls, so an alert extended under the same ID after being found over is
 missed until it reappears under a new ID. If the stored snapshot cannot be
-read, the run treats it as empty and carries on, fetching the cached texts
-again within the budget; `ended_alert_ids` is lost and rebuilt the same way. Snapshots written
+read, the run treats it as empty and carries on, fetching the texts again
+within the budget. When the object could not be read at all (a transient S3
+error) the run does not overwrite it, so its cached texts and
+`ended_alert_ids` survive for the next run. When it is corrupt, the run's save
+replaces it: `ended_alert_ids` starts over, and an ended alert whose re-fetch
+fails then counts as active until `/current` drops it. Snapshots written
 before `alerts_active` existed fall back to the length of `alerts`.
 
 `alerts/` is the only record of past weather alerts: the snapshot holds just

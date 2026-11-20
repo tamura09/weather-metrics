@@ -225,7 +225,9 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		AlertsActive:   len(alerts) + lookup.unfetched,
 		EndedAlertIDs:  lookup.ended,
 	}
-	if err := a.saveForecast(ctx, snapshot); err != nil {
+	if lookup.keepStored {
+		log.Printf("forecast snapshot left as it was, since it could not be read this run")
+	} else if err := a.saveForecast(ctx, snapshot); err != nil {
 		return nil, fmt.Errorf("save forecast snapshot: %w", err)
 	}
 
@@ -267,6 +269,10 @@ type alertLookup struct {
 	// did not fit the budget, in which case the cached end stands.
 	ended []string
 	calls int // /alert/{id} requests sent, failed ones included
+	// keepStored is set when the stored snapshot could not be read for a
+	// reason other than corruption. Its cached texts and ended IDs are still
+	// there, so this run must not overwrite them with what it rebuilt.
+	keepStored bool
 }
 
 // resolveAlerts turns the alert IDs embedded in the weather payload into text.
@@ -279,15 +285,19 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 		return alertLookup{}, nil
 	}
 
-	// An unreadable snapshot (a transient S3 error, or a corrupt object that
-	// only this run's save would replace) is treated as empty rather than
-	// stopping the run: stopping would leave the dashboard without metrics
-	// for as long as the alert lasts. The cost is that cached texts and
-	// ended_alert_ids are fetched again within the budget.
+	// An unreadable snapshot is treated as empty rather than stopping the
+	// run, which would leave the dashboard without metrics for as long as the
+	// alert lasts; its texts are fetched again within the budget. A corrupt
+	// one is then replaced by this run's save, the only thing that rewrites
+	// it. One that could not be read (a transient S3 error) is still intact,
+	// so the run does not overwrite it: an ended alert whose re-fetch fails
+	// would otherwise lose its place in ended_alert_ids for good.
 	stored, err := a.loadForecast(ctx)
 	if err != nil {
 		log.Printf("read stored alerts, fetching them again: %v", err)
-		stored = forecastSnapshot{}
+		result, lookupErr := lookupAlerts(ctx, weather, ids, forecastSnapshot{}, now)
+		result.keepStored = !errors.Is(err, errUndecodable)
+		return result, lookupErr
 	}
 	return lookupAlerts(ctx, weather, ids, stored, now)
 }
@@ -308,8 +318,9 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	// Unknown IDs are fetched one by one, each allowed the full HTTP timeout.
 	// A day with many new alerts and a slow API could otherwise spend the
 	// whole invocation here and never save the forecast or push the metrics,
-	// so the lookups share one budget. An ID cut off by it is not stored and
-	// is tried again on the next run.
+	// so the lookups share one budget. A new ID cut off by it is not stored
+	// and is tried again on the next run; a cached one past its end is taken
+	// as ended (see noText).
 	// The budget also ends early enough before the invocation's own deadline
 	// to leave time for saving the snapshot and pushing to Grafana after it.
 	budgetEnd := time.Now().Add(alertLookupBudget)
@@ -349,10 +360,11 @@ func lookupAlerts(ctx context.Context, weather *openWeather, ids []string, store
 	order := rotateIDs(unknown, now)
 	for i, id := range order {
 		if time.Until(budgetEnd) < httpTimeout {
-			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run", time.Until(budgetEnd).Round(time.Second), httpTimeout, len(order)-i))
+			before := result.unfetched
 			for _, rest := range order[i:] {
 				result.noText(rest, known)
 			}
+			failures = append(failures, fmt.Sprintf("%s left for alert lookups, under the %s a request may take; %d alert(s) left for the next run, %d taken as ended from cached text", time.Until(budgetEnd).Round(time.Second), httpTimeout, result.unfetched-before, len(order)-i-(result.unfetched-before)))
 			break
 		}
 		result.calls++
