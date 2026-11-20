@@ -43,8 +43,11 @@ draws on a separate quota.
 
 `/alert/{id}` is only called for alert IDs whose text is not already in the
 stored snapshot, which on a day with no weather warnings is none of them. If
-an alert cannot be decoded it is never stored, so it is fetched again on every
-run; a `decode alert` line in the logs means calls are being spent that way.
+an alert cannot be decoded it is never stored, so it is fetched again on later
+runs while it is still in force; a `decode alert` line in the logs means calls
+are being spent that way. Lookups of unknown IDs share a three-minute budget
+per run and start from a different ID each run, so with several unknown IDs a
+given one is fetched only when its turn comes within the budget.
 
 A failed run spends calls too: `/current` has already been paid for by the
 time `/timeline/1day` fails. The daily timeline often takes more than 20

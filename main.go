@@ -43,6 +43,10 @@ const (
 	// Total time a run may spend fetching the text of alerts it has not seen
 	// before; see resolveAlerts.
 	alertLookupBudget = 3 * time.Minute
+	// Kept free of alert lookups at the end of an invocation: the S3 writes
+	// and the Grafana push that follow them, the push allowed the full HTTP
+	// timeout.
+	afterAlertsReserve = httpTimeout + 30*time.Second
 )
 
 // parameterStore is the one SSM call this function makes, narrowed so tests
@@ -268,7 +272,15 @@ func (a *app) resolveAlerts(ctx context.Context, weather *openWeather, ids []str
 	// whole invocation here and never save the forecast or push the metrics,
 	// so the lookups share one budget. An ID cut off by it is not stored and
 	// is tried again on the next run.
-	alertCtx, cancel := context.WithTimeout(ctx, alertLookupBudget)
+	// The budget also ends early enough before the invocation's own deadline
+	// to leave time for saving the snapshot and pushing to Grafana after it.
+	budgetEnd := time.Now().Add(alertLookupBudget)
+	if invocationEnd, ok := ctx.Deadline(); ok {
+		if latest := invocationEnd.Add(-afterAlertsReserve); latest.Before(budgetEnd) {
+			budgetEnd = latest
+		}
+	}
+	alertCtx, cancel := context.WithDeadline(ctx, budgetEnd)
 	defer cancel()
 
 	var resolved []alertDetail
