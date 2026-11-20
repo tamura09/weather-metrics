@@ -459,6 +459,12 @@ type weatherSummaryRow struct {
 	DataLagSeconds float64 `json:"data_lag_seconds"`
 }
 
+// staleAlertCountAfter is how far the latest reading may be ahead of the
+// snapshot's updated_at before the summary's alert count is treated as stale.
+// It is half the fifteen-minute schedule: more than clock skew within a run,
+// less than the gap to the previous run.
+const staleAlertCountAfter = 7*time.Minute + 30*time.Second
+
 func (a *app) servedSummary(ctx context.Context, now time.Time) (weatherSummaryRow, error) {
 	today := startOfDay(now, a.zone)
 
@@ -496,7 +502,10 @@ func summarize(readings []observation, snapshot forecastSnapshot, zone *time.Loc
 	}
 
 	latest := readings[len(readings)-1]
-	if !snapshot.UpdatedAt.IsZero() && latest.Time.After(snapshot.UpdatedAt) {
+	// The run that writes both takes its clock before /current, and the
+	// reading carries OpenWeather's dt, which can be a little later; only a
+	// gap well beyond that means the snapshot is from an earlier run.
+	if !snapshot.UpdatedAt.IsZero() && latest.Time.Sub(snapshot.UpdatedAt) > staleAlertCountAfter {
 		summary.AlertsActive = nil
 	}
 	summary.Time = latest.Time.UnixMilli()

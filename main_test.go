@@ -664,4 +664,9 @@ func TestSummarizeNullsAStaleAlertCount(t *testing.T) {
 	if got := summarize(readings, fresh, testZone, now).AlertsActive; got == nil || *got != 0 {
 		t.Errorf("alerts_active = %v for a current snapshot, want 0", got)
 	}
+	// Same run, but the reading's dt is a few seconds after the run's clock.
+	skewed := forecastSnapshot{UpdatedAt: readings[0].Time.Add(-5 * time.Second)}
+	if got := summarize(readings, skewed, testZone, now).AlertsActive; got == nil {
+		t.Error("alerts_active = null for a reading seconds after updated_at, want the count")
+	}
 }
