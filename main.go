@@ -225,10 +225,22 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 		AlertsActive:   len(alerts) + lookup.unfetched,
 		EndedAlertIDs:  lookup.ended,
 	}
+	save := true
 	if lookup.keepStored {
-		log.Printf("forecast snapshot left as it was, since it could not be read this run")
-	} else if err := a.saveForecast(ctx, snapshot); err != nil {
-		return nil, fmt.Errorf("save forecast snapshot: %w", err)
+		// The earlier read failed, so the stored alert cache was not used.
+		// Try once more and carry it over, so this run's forecast is saved
+		// without losing texts and ended IDs it could not see.
+		if stored, err := a.loadForecast(ctx); err == nil {
+			snapshot.Alerts, snapshot.EndedAlertIDs = carryAlertCache(stored, snapshot, now)
+		} else {
+			save = false
+			log.Printf("forecast snapshot left as it was, since it could not be read this run: %v", err)
+		}
+	}
+	if save {
+		if err := a.saveForecast(ctx, snapshot); err != nil {
+			return nil, fmt.Errorf("save forecast snapshot: %w", err)
+		}
 	}
 
 	// Read back the month we just wrote to, so the derived series -- today's
@@ -401,6 +413,28 @@ func (r *alertLookup) noText(id string, known map[string]alertDetail) {
 		return
 	}
 	r.unfetched++
+}
+
+// carryAlertCache merges the alert cache of a snapshot this run could not
+// read at first into the one it built: stored texts not past their end and
+// stored ended IDs are kept alongside this run's. AlertsActive is left as the
+// run counted it.
+func carryAlertCache(stored, built forecastSnapshot, now time.Time) ([]alertDetail, []string) {
+	alerts := mergeAlerts(stored.Alerts, built.Alerts, now)
+	have := make(map[string]bool, len(alerts))
+	for _, alert := range alerts {
+		have[alert.ID] = true
+	}
+	seen := make(map[string]bool)
+	var ended []string
+	for _, id := range append(append([]string{}, stored.EndedAlertIDs...), built.EndedAlertIDs...) {
+		if !seen[id] && !have[id] {
+			seen[id] = true
+			ended = append(ended, id)
+		}
+	}
+	sort.Strings(ended)
+	return alerts, ended
 }
 
 // alertOver reports whether an alert's announced end has passed, the same

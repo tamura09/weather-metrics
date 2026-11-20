@@ -115,3 +115,27 @@ func sorted(ids []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+func TestCarryAlertCacheKeepsWhatTheRunCouldNotSee(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	future := now.Add(time.Hour).Unix()
+	stored := forecastSnapshot{
+		Alerts:        []alertDetail{{ID: "old", End: future}, {ID: "gone", End: now.Add(-time.Hour).Unix()}},
+		EndedAlertIDs: []string{"ended-before", "new"},
+	}
+	built := forecastSnapshot{
+		Alerts:        []alertDetail{{ID: "new", End: future}},
+		EndedAlertIDs: []string{"ended-now"},
+	}
+	alerts, ended := carryAlertCache(stored, built, now)
+	var ids []string
+	for _, alert := range alerts {
+		ids = append(ids, alert.ID)
+	}
+	if strings.Join(sorted(ids), ",") != "new,old" {
+		t.Errorf("alerts = %v, want new, old", ids)
+	}
+	if strings.Join(ended, ",") != "ended-before,ended-now" {
+		t.Errorf("ended = %v, want ended-before, ended-now (new has text now)", ended)
+	}
+}

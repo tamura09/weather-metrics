@@ -227,8 +227,9 @@ save calls, so an alert extended under the same ID after being found over is
 missed until it reappears under a new ID. If the stored snapshot cannot be
 read, the run treats it as empty and carries on, fetching the texts again
 within the budget. When the object could not be read at all (a transient S3
-error) the run does not overwrite it, so its cached texts and
-`ended_alert_ids` survive for the next run. When it is corrupt, the run's save
+error), the run reads it once more before saving and carries its cached texts
+and `ended_alert_ids` into the new snapshot; if that read fails too, the
+snapshot, forecast included, is left as it was for that run. When it is corrupt, the run's save
 replaces it: `ended_alert_ids` starts over, and an ended alert whose re-fetch
 fails then counts as active until `/current` drops it. Snapshots written
 before `alerts_active` existed fall back to the length of `alerts`.
