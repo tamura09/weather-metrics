@@ -211,34 +211,36 @@ func (a *app) collectLocation(ctx context.Context, event collectEvent) (any, err
 
 	var dayRecords, dailyForecast []dayRecord
 	dailyUpdatedAt := now.UTC()
+	// A response with no usable rows (none, or none from today on once
+	// converted) counts as a failure too, so it cannot wipe a good forecast.
 	days, err := weather.days(ctx, startOfDay(now, a.zone).AddDate(0, 0, -dailyLookbackDays).Unix())
-	if err == nil && len(days.Data) == 0 {
-		err = errors.New("daily timeline came back empty")
+	if err == nil {
+		dayRecords = buildDays(days.Data, a.zone, now)
+		if dailyForecast = forecastDays(dayRecords, now, a.zone); len(dailyForecast) == 0 {
+			err = errors.New("daily timeline had no days from today on")
+		}
 	}
 	if err != nil {
 		log.Printf("read daily timeline, keeping the previous forecast: %v", err)
+		dayRecords = nil
 		dailyForecast = forecastDays(stored.Daily, now, a.zone)
 		dailyUpdatedAt = fetchedAt(stored.DailyUpdatedAt, len(stored.Daily) > 0, stored)
-	} else {
-		dayRecords = buildDays(days.Data, a.zone, now)
-		if err := a.archiveDays(ctx, dayRecords); err != nil {
-			return nil, fmt.Errorf("archive daily timeline: %w", err)
-		}
-		dailyForecast = forecastDays(dayRecords, now, a.zone)
+	} else if err := a.archiveDays(ctx, dayRecords); err != nil {
+		return nil, fmt.Errorf("archive daily timeline: %w", err)
 	}
 
 	var hourly []hourRecord
 	hourlyUpdatedAt := now.UTC()
 	hours, err := weather.hours(ctx, now.Unix())
-	if err == nil && len(hours.Data) == 0 {
-		err = errors.New("hourly timeline came back empty")
+	if err == nil {
+		if hourly = buildHours(hours.Data); len(hourly) == 0 {
+			err = errors.New("hourly timeline had no usable hours")
+		}
 	}
 	if err != nil {
 		log.Printf("read hourly timeline, keeping the previous forecast: %v", err)
 		hourly = upcomingHours(stored.Hourly, now)
 		hourlyUpdatedAt = fetchedAt(stored.HourlyUpdatedAt, len(stored.Hourly) > 0, stored)
-	} else {
-		hourly = buildHours(hours.Data)
 	}
 
 	lookup, err := resolveAlerts(ctx, weather, present.Alerts, stored, storedUnreadable, now)
